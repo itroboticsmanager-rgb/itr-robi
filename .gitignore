@@ -8,6 +8,8 @@
 secrets/
 
 # Python
+*.egg-info/
+.eggs/
 __pycache__/
 *.py[cod]
 .pytest_cache/

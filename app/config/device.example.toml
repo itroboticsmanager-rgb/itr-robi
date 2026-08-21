@@ -1,0 +1,32 @@
+# Приклад конфігурації пристрою.
+# Секрети сюди не потрапляють: CRM-токени встановлюються окремо під час
+# provisioning і не зберігаються в Git (принцип 6 у README).
+
+device_id = "robi-dev-01"
+site = "reception"
+
+[display]
+# 800x480 — клас 5" DSI, 1280x720 — офіційний 7" Touch Display 2.
+# Рішення ще відкрите (D-021), тому тут просто число.
+width = 800
+height = 480
+fullscreen = false
+target_fps = 60
+
+[crm]
+enabled = true
+url = "ws://127.0.0.1:8765"
+reconnect_min_s = 1.0
+reconnect_max_s = 30.0
+
+# Allowlist перевіряється НА ПРИСТРОЇ, а не лише в CRM (D-038).
+# Порожній allowed_domains придатний тільки для розробки: у production
+# порожній список означає, що ROBI покаже будь-який домен, який попросить CRM.
+allowed_url_schemes = ["https"]
+allowed_domains = ["example.org"]
+
+[features]
+camera = true
+nfc = true
+voice = false   # ще не реалізовано; конфігурація з true не пройде валідацію
+rgb = true
