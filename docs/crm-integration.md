@@ -80,7 +80,7 @@ CRM має віддалено змінювати сценарій ROBI, а пр�
 | `device.health` | uptime, температура, storage, network, peripherals | sampling/rate limit TODO |
 | `command.status` | accepted/completed/rejected/failed + reason code | не дублювати payload із чутливими даними |
 | `interaction.started/ended` | mode, source, duration, outcome | мінімізувати ідентифікацію людини |
-| `nfc.detected` | тип сценарію, success/failure | UID картки — лише за окремою потребою й політикою |
+| `nfc.detected` | тип сценарію, success/failure | карток у v1 немає (`D-014`); ідентифікації особи в події не буває |
 | `presence.detected` | є людина / скільки / груба відстань | лише агрегат, без ідентифікації (`D-027`) |
 | `touch.action` | semantic action ID | не сирі координати без діагностичної потреби |
 | `voice.status` | listening/processing/completed/error | transcript/audio policy TODO |
@@ -186,7 +186,6 @@ ROBI показує успіх
 - чи зберігаються кадри, аудіо або transcripts;
 - правову підставу й строки зберігання;
 - видимий апаратний індикатор активної камери/мікрофона (`D-029`);
-- чи NFC-картка ідентифікує учня;
 - хто в CRM бачить interaction events;
 - як видаляються дані та діагностичні журнали.
 
