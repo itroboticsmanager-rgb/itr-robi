@@ -1,0 +1,64 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Node / web tooling
+node_modules/
+.npm/
+.pnpm-store/
+coverage/
+
+# Generic build and runtime output
+build/
+dist/
+out/
+tmp/
+temp/
+*.log
+logs/
+*.pid
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*~
+
+# CAD / slicer temporary files (source and deliberate exports remain tracked)
+*.FCStd1
+*.bak
+*.autosave
+*.3mf.lock
+*.gcode
+
+# KiCad temporary and backup files
+*-backups/
+_autosave-*
+*.lck
+~*.sch
+~*.pcb
+
+# Local captures and diagnostics
+captures/
+recordings/
+diagnostics/
+
