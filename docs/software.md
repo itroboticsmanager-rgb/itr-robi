@@ -34,8 +34,8 @@ app/src/
 - `interacting` — активний touch/NFC/voice/QR сценарій;
 - `offline` — CRM недоступна, локальна функціональність збережена;
 - `degraded` — необов'язкова периферія відмовила;
-- `service` — діагностика без звичайних рухів/контенту;
-- `shutting_down` — завершення дій, паркування приводів, sync і shutdown;
+- `service` — діагностика без звичайного контенту й без активної камери;
+- `shutting_down` — завершення дій, зупинка захоплення, sync і shutdown;
 - `fault` — небезпечний або невідновлюваний стан.
 
 Окремі `mascot/qr/info/nfc/voice` є режимами контенту, а не заміною системних станів. Наприклад `offline + mascot` є валідною комбінацією.
@@ -93,6 +93,17 @@ app/src/
 
 Секрети не входять до звичайного config-файлу в Git. Схема, формат і спосіб захищеного provisioning — TODO.
 
+## Vision
+
+Окремий шар, бо він єдиний бачить кадр.
+
+- працює лише в режимі `mascot`; в інших режимах захоплення зупиняється;
+- обробляє зменшений кадр і не тримає повнорозмірний довше за один прохід;
+- віддає вгору лише події: `face.present`, кількість, груба позиція й відстань;
+- ніколи не віддає, не логує і не кешує зображення — заборона `D-027` реалізується межею модуля, а не дисципліною виклику;
+- стан захоплення синхронний з апаратним індикатором (`D-029`): індикатор гасне лише коли захоплення реально зупинено;
+- має fake-реалізацію, що програє записаний сценарій подій без камери.
+
 ## Hardware abstraction
 
 Кожний адаптер має надавати:
@@ -129,12 +140,13 @@ app/src/
 
 ## Тестування
 
-- unit: state transitions, priority, timeouts, payload validation, QR content;
+- unit: state transitions, priority, timeouts, payload validation, QR content, мапінг подій vision у поведінку погляду;
 - integration: fake CRM, reconnect, duplicate/out-of-order commands, offline recovery;
-- UI: цільова роздільність, touch targets, читабельність і QR scan test;
+- UI: цільова роздільність, touch targets, читабельність і QR scan test зовнішнім телефоном;
 - hardware-in-loop: кожний модуль і комбінації навантаження;
 - endurance: тривалий loop UI/network, audio/RGB, temperature soak;
-- fault injection: від'єднання периферії, CRM loss, low storage, app restart.
+- fault injection: від'єднання периферії, CRM loss, low storage, app restart;
+- privacy: перевірка, що жоден кадр не потрапляє в журнали, телеметрію чи файлову систему.
 
 ## TODO до першого коду
 
