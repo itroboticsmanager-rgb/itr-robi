@@ -156,3 +156,39 @@ def test_allowed_url_is_accepted(app):
     assert result.status is CommandStatus.ACCEPTED
     app.step(0.016)
     assert app.coordinator.mode is ModeName.QR
+
+
+def test_bare_tap_does_not_preempt_crm(app):
+    """Дотик у режимі mascot не має глушити CRM.
+
+    Регресія з живого прогону: кожен клік захоплював USER-пріоритет на
+    20 секунд, хоча на екрані нічого не змінювалося. Зовні це виглядало
+    як «ROBI перестав показувати QR» без видимої причини, а на рецепції
+    те саме зробив би випадковий доторк до екрана.
+    """
+    import pygame
+
+    from robi.state.coordinator import Priority
+
+    pygame.event.post(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": (10, 10), "button": 1})
+    )
+    app.step(0.016)
+    assert app.coordinator.active.priority is Priority.BACKGROUND
+
+    result = app.accept_command(
+        Command(CommandKind.SHOW_QR, "after-tap", {"value": "https://example.org/x",
+                                                   "duration_ms": 5000})
+    )
+    assert result.status is CommandStatus.ACCEPTED
+
+
+def test_tap_still_reaches_the_mode(app):
+    """Дотик не зникає: обличчя реагує на нього підсвіткою."""
+    import pygame
+
+    pygame.event.post(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": (10, 10), "button": 1})
+    )
+    app.step(0.016)
+    assert app.outputs.rgb is not None

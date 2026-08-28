@@ -184,8 +184,16 @@ class App:
                 out.append(
                     Touch(Source.TOUCH, x=event.pos[0] / w, y=event.pos[1] / h)
                 )
-                # Дотик користувача важливіший за фонову команду CRM.
-                self.coordinator.user_interaction(self._current)
+                # USER-пріоритет тут НЕ захоплюється навмисно. Дотик у режимі
+                # mascot нічого не відкриває: обличчя лише реагує підсвіткою.
+                # Якби кожен дотик claim'ив пріоритет, випадковий доторк до
+                # екрана на рецепції глушив би CRM на десятки секунд — і
+                # зовні це виглядало б як «ROBI перестав показувати QR» без
+                # жодної видимої причини.
+                #
+                # Пріоритет має захоплювати той режим, який дотик справді
+                # відкриває. Це стане актуальним разом з `info` і `nfc`;
+                # `Coordinator.user_interaction` уже готовий і покритий тестами.
         return out
 
     def accept_command(self, cmd: Command) -> CommandResult:
