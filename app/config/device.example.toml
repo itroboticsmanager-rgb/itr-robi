@@ -6,10 +6,11 @@ device_id = "robi-dev-01"
 site = "reception"
 
 [display]
-# 800x480 — клас 5" DSI, 1280x720 — офіційний 7" Touch Display 2.
-# Рішення ще відкрите (D-021), тому тут просто число.
-width = 800
-height = 480
+# Raspberry Pi Touch Display 2, 7 дюймів (D-021).
+# Рідна орієнтація панелі — портретна 720x1280, тому в системі потрібен
+# поворот у landscape. Застосунок отримує вже повернутий кадр.
+width = 1280
+height = 720
 fullscreen = false
 target_fps = 60
 
