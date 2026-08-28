@@ -25,6 +25,16 @@ from .state.machine import StateMachine, SystemState
 from .ui.overlay import Overlay
 from .vision.fake import FakeVision
 
+#: Верхня межа кроку симуляції. Цикл може заблокуватися надовго з причин,
+#: які не є рендером: перетягування вікна на Windows блокує event pump,
+#: на пристрої це буде throttling, гикавка носія або сплячий watchdog.
+#: Живий прогін дав кадр на 4.5 с при медіані 17 мс.
+#:
+#: Без обмеження такий dt телепортує анімацію й миттєво з'їдає TTL намірів.
+#: У метриках лишається справжній час кадру: приховувати затримку не можна,
+#: її треба бачити.
+MAX_STEP_S = 0.1
+
 
 class App:
     def __init__(
@@ -135,12 +145,17 @@ class App:
     # -- один кадр ---------------------------------------------------------
 
     def step(self, dt: float) -> None:
+        # Логіка йде обмеженим кроком, метрики — справжнім часом кадру.
+        # TTL команд це не зачіпає: координатор живе на годиннику, а не на
+        # dt, тож реальна затримка коректно погасить прострочений сценарій.
+        sim_dt = min(dt, MAX_STEP_S)
+
         events: list[Event] = []
         events.extend(self._pump_window())
-        events.extend(self.tof.poll(dt))
-        events.extend(self.nfc.poll(dt))
+        events.extend(self.tof.poll(sim_dt))
+        events.extend(self.nfc.poll(sim_dt))
         if self.vision.capturing:
-            events.extend(self.vision.poll(dt))
+            events.extend(self.vision.poll(sim_dt))
 
         self._pump_crm()
         changed = self.coordinator.tick()
@@ -151,8 +166,8 @@ class App:
         for event in events:
             mode.handle(event)
 
-        intent = mode.update(dt)
-        self._apply_intent(intent, dt)
+        intent = mode.update(sim_dt)
+        self._apply_intent(intent, sim_dt)
         self._sync_state()
 
         mode.draw(self.screen)

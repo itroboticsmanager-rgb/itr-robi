@@ -192,3 +192,39 @@ def test_tap_still_reaches_the_mode(app):
     )
     app.step(0.016)
     assert app.outputs.rgb is not None
+
+
+def test_long_stall_is_clamped_for_logic(app):
+    """Заблокований цикл не має телепортувати анімацію.
+
+    Живий прогін дав кадр на 4.5 с — на Windows перетягування вікна
+    блокує event pump. На пристрої те саме зробить throttling або
+    гикавка носія. Логіка йде обмеженим кроком, метрика бачить правду.
+    """
+    from robi.bootstrap import MAX_STEP_S
+    from robi.events import FaceSeen, Source
+
+    # Без цього fake vision підкидав би власні події й перезаписував ціль.
+    app.vision.stop_capture()
+
+    def gaze_after(step_dt: float) -> float:
+        mode = app.modes[ModeName.MASCOT]
+        mode.face._gaze = (0.0, 0.0)
+        mode._since_face = 0.0
+        mode.handle(FaceSeen(Source.VISION, count=1, x=1.0, y=0.0, size=0.3))
+        app.step(step_dt)
+        return mode.face._gaze[0]
+
+    # Затримка в 4.5 с має дати рівно те саме, що й обмежений крок.
+    stalled = gaze_after(4.5)
+    clamped = gaze_after(MAX_STEP_S)
+    assert stalled == pytest.approx(clamped)
+
+    # Без обмеження погляд стрибнув би майже в ціль за один кадр.
+    assert stalled < 0.9
+
+
+def test_metrics_still_show_the_real_stall(app):
+    """Затримку не можна ховати: обмеження стосується логіки, не вимірювання."""
+    app.step(4.5)
+    assert app.metrics.snapshot().ms_worst >= 4500.0
