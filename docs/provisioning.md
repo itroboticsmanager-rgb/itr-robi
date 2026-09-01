@@ -339,7 +339,7 @@ powercfg /hibernate off
 | BitLocker | вимкнено |
 | Мережевий профіль | Wi-Fi → Private |
 | Локальні облікові записи при купівлі | лише `Admin`; чужих облікових записів немає |
-| Recovery image | `SurfaceGo2_BMR_176020_10.2406.2_eoc1_pro_commercial.zip`, ~11 ГБ, **Windows 11 Pro** |
+| Recovery image | `SurfaceGo2_BMR_176020_10.2406.2_eoc1_pro_commercial.zip`, 11.76 ГБ. Маркер у корені: `SurfaceGo2.176020.M1313579-001.23H2.10.2406.2.wim.mrk` → **Windows 11 Pro 23H2**. Мовний пакет `uk-ua` в образі є |
 | Дата установки | |
 | Ім'я локального облікового запису | |
 | Камери в UEFI | Front / Rear / IR — усі `Enabled`. Задню й IR свідомо **не** вимикали: межа `D-027` лишається програмною, на рівні модуля `vision` |
