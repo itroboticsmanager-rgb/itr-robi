@@ -104,6 +104,7 @@ ROBI/
 - [Апаратна частина](docs/hardware.md)
 - [Корпус і 3D-друк](docs/enclosure.md)
 - [Програмна частина](docs/software.md)
+- [Провізіонінг пристрою](docs/provisioning.md) — чиста установка Windows 11 і налаштування під ROBI
 - [Інтеграція з CRM](docs/crm-integration.md)
 - [Дорожня карта](docs/roadmap.md)
 - [BOM](docs/bom.md)
