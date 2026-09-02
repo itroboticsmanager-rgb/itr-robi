@@ -56,7 +56,10 @@ class VisionConfig:
     # коштують 18 % при кращій детекції. Див. D-053.
     fps: float = 4.0
     detect_width: int = 224
-    min_face_frac: float = 0.12
+    min_face_frac: float = 0.08
+    # Віддзеркалення горизонталі: без нього погляд відводиться від людини
+    # замість стежити за нею. Причина — в docstring `CameraVision._largest`.
+    mirror: bool = True
 
 
 @dataclass(slots=True)
@@ -119,7 +122,8 @@ class Config:
             device_index=int(v.get("device_index", 0)),
             fps=float(v.get("fps", 4.0)),
             detect_width=int(v.get("detect_width", 224)),
-            min_face_frac=float(v.get("min_face_frac", 0.12)),
+            min_face_frac=float(v.get("min_face_frac", 0.08)),
+            mirror=bool(v.get("mirror", True)),
         )
 
         cfg.validate()

@@ -164,10 +164,34 @@ def test_camera_geometry_is_normalised_to_minus_one_plus_one():
 def test_camera_picks_the_largest_face():
     """Найбільше обличчя — найближча людина; на неї ROBI й дивиться."""
     faces = [(0, 0, 10, 10), (60, 40, 30, 30), (20, 20, 5, 5)]
-    count, x, y, size = CameraVision._largest(faces, 100, 80)
+    count, x, y, size = CameraVision._largest(faces, 100, 80, mirror=False)
     assert count == 3
     assert size == pytest.approx(0.3)
     assert x > 0 and y > 0
+
+
+def test_mirror_flips_horizontal_and_only_horizontal():
+    """Без віддзеркалення погляд відводиться від людини, а не стежить за нею.
+
+    Екран — картинка, а не співрозмовник: додатний `x` зсуває зіницю
+    вправо з погляду глядача, а сира камера дає протилежний бік. Тест
+    заразом стежить, щоб вертикаль випадково не перевернули разом із
+    горизонталлю.
+    """
+    face = [(60, 40, 30, 30)]
+    raw = CameraVision._largest(face, 100, 80, mirror=False)
+    mirrored = CameraVision._largest(face, 100, 80, mirror=True)
+
+    assert mirrored[1] == pytest.approx(-raw[1])
+    assert mirrored[2] == pytest.approx(raw[2])
+    assert mirrored[3] == pytest.approx(raw[3])
+    assert mirrored[0] == raw[0]
+
+
+def test_mirror_is_on_by_default():
+    """Дефолт має бути правильним: конфіг пристрою мовчить про mirror."""
+    face = [(60, 40, 30, 30)]
+    assert CameraVision._largest(face, 100, 80)[1] < 0
 
 
 def test_model_ships_with_the_package():

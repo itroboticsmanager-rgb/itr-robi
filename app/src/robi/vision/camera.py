@@ -48,8 +48,9 @@ class CameraVision:
         device_index: int = 0,
         fps: float = 4.0,
         detect_width: int = 224,
-        min_face_frac: float = 0.12,
-        score_threshold: float = 0.8,
+        min_face_frac: float = 0.08,
+        score_threshold: float = 0.6,
+        mirror: bool = True,
     ) -> None:
         # D-033: достатньо низької роздільності й кількох кадрів за секунду.
         self._device_index = device_index
@@ -57,6 +58,7 @@ class CameraVision:
         self._detect_width = detect_width
         self._min_face_frac = min_face_frac
         self._score_threshold = score_threshold
+        self._mirror = mirror
 
         self._cv2 = None
         self._detector = None
@@ -182,7 +184,7 @@ class CameraVision:
                 self._input_size = size
 
             _, faces = self._detector.detect(small)
-            result = self._largest(self._filter(faces), size[0], size[1])
+            result = self._largest(self._filter(faces), size[0], size[1], self._mirror)
             with self._lock:
                 self._latest = result
             # `frame` і `small` виходять зі скоупу тут: далі межі цього
@@ -192,15 +194,30 @@ class CameraVision:
             self._stop.wait(max(self._interval - elapsed, 0.0))
 
     def _filter(self, faces) -> list:
-        """Відкидає надто дрібні знахідки: людина в глибині холу нам не адресат."""
+        """Відкидає надто дрібні знахідки: людина в глибині холу нам не адресат.
+
+        Поріг навмисно невисокий: обличчя в профіль **вужче** за анфас,
+        тож надто суворий фільтр губить людину саме тоді, коли вона
+        повертається вбік — а це найчастіший рух біля стійки.
+        """
         if faces is None:
             return []
         min_w = self._detect_width * self._min_face_frac
         return [f[:4] for f in faces if float(f[2]) >= min_w]
 
     @staticmethod
-    def _largest(faces, frame_w: int, frame_h: int) -> tuple[int, float, float, float]:
-        """Найбільше обличчя — це найближча людина; на неї й дивимось."""
+    def _largest(
+        faces, frame_w: int, frame_h: int, mirror: bool = True
+    ) -> tuple[int, float, float, float]:
+        """Найбільше обличчя — це найближча людина; на неї й дивимось.
+
+        `mirror` віддзеркалює горизонталь, і це не косметика. Екран —
+        картинка, а не співрозмовник: додатний `x` зсуває зіницю вправо
+        з погляду того, хто дивиться. Сира камера дає протилежне — коли
+        людина йде праворуч, у кадрі вона зміщується ліворуч. Без
+        віддзеркалення погляд відводиться від людини замість стежити за
+        нею. Те саме роблять відеодзвінки для власного зображення.
+        """
         count = len(faces)
         if count == 0:
             return (0, 0.0, 0.0, 0.0)
@@ -208,7 +225,8 @@ class CameraVision:
         cx = (float(x) + float(w) / 2.0) / float(frame_w)
         cy = (float(y) + float(h) / 2.0) / float(frame_h)
         # -1..1 відносно центра кадру, як вимагає FaceSeen.
-        return (count, cx * 2.0 - 1.0, cy * 2.0 - 1.0, float(w) / float(frame_w))
+        nx = cx * 2.0 - 1.0
+        return (count, -nx if mirror else nx, cy * 2.0 - 1.0, float(w) / float(frame_w))
 
     # -- те, що бачить застосунок ------------------------------------------
 

@@ -80,6 +80,7 @@ class App:
                 fps=config.vision.fps,
                 detect_width=config.vision.detect_width,
                 min_face_frac=config.vision.min_face_frac,
+                mirror=config.vision.mirror,
             )
         else:
             self.vision = FakeVision()
