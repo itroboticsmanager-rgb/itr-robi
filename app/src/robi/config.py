@@ -51,8 +51,11 @@ class VisionConfig:
 
     backend: str = "fake"
     device_index: int = 0
-    fps: float = 8.0
-    detect_width: int = 320
+    # Значення з вимірювання на пристрої, а не з голови: 8 к/с при 320 px
+    # з'їдали 74 % ядра й навіть не встигали, тоді як 4 к/с при 224 px
+    # коштують 18 % при кращій детекції. Див. D-053.
+    fps: float = 4.0
+    detect_width: int = 224
     min_face_frac: float = 0.12
 
 
@@ -114,8 +117,8 @@ class Config:
         cfg.vision = VisionConfig(
             backend=str(v.get("backend", "fake")),
             device_index=int(v.get("device_index", 0)),
-            fps=float(v.get("fps", 8.0)),
-            detect_width=int(v.get("detect_width", 320)),
+            fps=float(v.get("fps", 4.0)),
+            detect_width=int(v.get("detect_width", 224)),
             min_face_frac=float(v.get("min_face_frac", 0.12)),
         )
 

@@ -46,8 +46,8 @@ class CameraVision:
     def __init__(
         self,
         device_index: int = 0,
-        fps: float = 8.0,
-        detect_width: int = 320,
+        fps: float = 4.0,
+        detect_width: int = 224,
         min_face_frac: float = 0.12,
         score_threshold: float = 0.8,
     ) -> None:
