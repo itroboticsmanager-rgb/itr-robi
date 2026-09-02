@@ -168,3 +168,22 @@ def test_camera_picks_the_largest_face():
     assert count == 3
     assert size == pytest.approx(0.3)
     assert x > 0 and y > 0
+
+
+def test_model_ships_with_the_package():
+    """Модель має лежати поруч із кодом, а не завантажуватись у рантаймі.
+
+    Пристрій на рецепції мусить піднятися без мережі (offline-стійкість),
+    тому відсутність цього файлу — не дрібниця пакування, а зламаний старт.
+    """
+    from robi.vision.camera import MODEL
+
+    assert MODEL.exists(), f"модель YuNet не знайдено: {MODEL}"
+    assert MODEL.stat().st_size > 100_000, "файл моделі підозріло малий"
+
+
+def test_camera_reports_why_it_is_unavailable():
+    """`health.detail` має пояснювати причину, інакше degraded не діагностується."""
+    v = CameraVision()
+    assert v.health().detail
+    assert not v.health().ok

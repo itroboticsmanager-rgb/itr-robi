@@ -26,6 +26,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Модель YuNet їде разом з пакетом: пристрій не має ходити по неї в мережу
+# під час старту (D-053, offline-стійкість).
+[tool.setuptools.package-data]
+"robi.vision" = ["models/*.onnx"]
+
 [tool.pytest.ini_options]
 testpaths = ["../tests"]
 pythonpath = ["src"]

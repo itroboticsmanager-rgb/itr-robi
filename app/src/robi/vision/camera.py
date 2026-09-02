@@ -6,6 +6,17 @@
 системи не може його отримати, залогувати чи відправити в CRM навіть
 помилково.
 
+Детектор — YuNet (`cv2.FaceDetectorYN`). Каскади Хаара, на які спиралася
+перша редакція D-053, з OpenCV 5 прибрані: `CascadeClassifier` більше
+немає в біндингах, а тека `cv2.data.haarcascades` порожня. Модель YuNet
+лежить поруч у `models/` і входить у пакет — пристрій не має ходити по
+неї в мережу, бо offline-стійкість є вимогою, а не зручністю.
+
+OpenCV містить і `FaceRecognizerSF`, тобто розпізнавання конкретних
+людей. Тут він не використовується й використаний бути не може: D-027
+забороняє ідентифікацію, а `FaceSeen` не має поля, куди такий результат
+можна було б покласти.
+
 Захоплення йде в окремому потоці навмисно. Детекція коштує десятки
 мілісекунд, а бюджет кадру анімації — 16.7 мс: якби вони жили в одному
 циклі, обличчя смикалося б у такт детекції. Головний потік лише забирає
@@ -20,10 +31,13 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 
 from ..events import FaceSeen, Source
 from ..hardware.base import Health
 from .base import VisionStats
+
+MODEL = Path(__file__).with_name("models") / "face_detection_yunet_2023mar.onnx"
 
 
 class CameraVision:
@@ -35,16 +49,19 @@ class CameraVision:
         fps: float = 8.0,
         detect_width: int = 320,
         min_face_frac: float = 0.12,
+        score_threshold: float = 0.8,
     ) -> None:
         # D-033: достатньо низької роздільності й кількох кадрів за секунду.
         self._device_index = device_index
         self._interval = 1.0 / max(fps, 0.1)
         self._detect_width = detect_width
         self._min_face_frac = min_face_frac
+        self._score_threshold = score_threshold
 
         self._cv2 = None
-        self._cascade = None
+        self._detector = None
         self._capture = None
+        self._input_size: tuple[int, int] | None = None
 
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -69,17 +86,33 @@ class CameraVision:
             self._detail = "opencv не встановлено (extra 'camera')"
             return self.health()
 
-        self._cv2 = cv2
-        path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        cascade = cv2.CascadeClassifier(path)
-        if cascade.empty():
+        if not hasattr(cv2, "FaceDetectorYN"):
             self._ok = False
-            self._detail = "каскад не завантажився"
+            self._detail = f"opencv {cv2.__version__} без FaceDetectorYN"
             return self.health()
 
-        self._cascade = cascade
+        if not MODEL.exists():
+            self._ok = False
+            self._detail = f"модель не знайдено: {MODEL.name}"
+            return self.health()
+
+        self._cv2 = cv2
+        try:
+            self._detector = cv2.FaceDetectorYN.create(
+                str(MODEL),
+                "",
+                (self._detect_width, self._detect_width),
+                self._score_threshold,
+                0.3,
+                5000,
+            )
+        except Exception as exc:  # noqa: BLE001 — причина йде в health, а не в падіння
+            self._ok = False
+            self._detail = f"детектор не створився: {exc}"
+            return self.health()
+
         self._ok = True
-        self._detail = f"opencv {cv2.__version__}, haar"
+        self._detail = f"opencv {cv2.__version__}, yunet"
         return self.health()
 
     def start_capture(self) -> None:
@@ -108,6 +141,7 @@ class CameraVision:
         if self._capture is not None:
             self._capture.release()
             self._capture = None
+        self._input_size = None
         with self._lock:
             self._latest = None
 
@@ -138,24 +172,31 @@ class CameraVision:
 
             height, width = frame.shape[:2]
             scale = self._detect_width / float(width) if width else 1.0
-            small = cv2.resize(frame, (self._detect_width, max(int(height * scale), 1)))
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            gray = cv2.equalizeHist(gray)
+            small_h = max(int(height * scale), 1)
+            small = cv2.resize(frame, (self._detect_width, small_h))
 
-            sh, sw = gray.shape[:2]
-            min_side = max(int(sw * self._min_face_frac), 20)
-            faces = self._cascade.detectMultiScale(
-                gray, scaleFactor=1.2, minNeighbors=5, minSize=(min_side, min_side)
-            )
+            # setInputSize недешевий, тож викликається лише коли розмір змінився.
+            size = (self._detect_width, small_h)
+            if size != self._input_size:
+                self._detector.setInputSize(size)
+                self._input_size = size
 
-            result = self._largest(faces, sw, sh)
+            _, faces = self._detector.detect(small)
+            result = self._largest(self._filter(faces), size[0], size[1])
             with self._lock:
                 self._latest = result
-            # `frame`, `small` і `gray` виходять зі скоупу тут: далі межі
-            # цього циклу зображення не існує ніде.
+            # `frame` і `small` виходять зі скоупу тут: далі межі цього
+            # циклу зображення не існує ніде.
 
             elapsed = time.perf_counter() - started
             self._stop.wait(max(self._interval - elapsed, 0.0))
+
+    def _filter(self, faces) -> list:
+        """Відкидає надто дрібні знахідки: людина в глибині холу нам не адресат."""
+        if faces is None:
+            return []
+        min_w = self._detect_width * self._min_face_frac
+        return [f[:4] for f in faces if float(f[2]) >= min_w]
 
     @staticmethod
     def _largest(faces, frame_w: int, frame_h: int) -> tuple[int, float, float, float]:
@@ -163,7 +204,7 @@ class CameraVision:
         count = len(faces)
         if count == 0:
             return (0, 0.0, 0.0, 0.0)
-        x, y, w, h = max(faces, key=lambda f: int(f[2]) * int(f[3]))
+        x, y, w, h = max(faces, key=lambda f: float(f[2]) * float(f[3]))
         cx = (float(x) + float(w) / 2.0) / float(frame_w)
         cy = (float(y) + float(h) / 2.0) / float(frame_h)
         # -1..1 відносно центра кадру, як вимагає FaceSeen.
