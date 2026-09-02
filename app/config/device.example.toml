@@ -6,11 +6,12 @@ device_id = "robi-dev-01"
 site = "reception"
 
 [display]
-# Raspberry Pi Touch Display 2, 7 дюймів (D-021).
-# Рідна орієнтація панелі — портретна 720x1280, тому в системі потрібен
-# поворот у landscape. Застосунок отримує вже повернутий кадр.
-width = 1280
-height = 720
+# Вбудований екран Surface Go 2: 10.5", 1920x1280, 3:2 (D-040).
+# Повороту на рівні системи не потрібно — застосунок працює в альбомній
+# орієнтації напряму. Співвідношення 3:2 помітно "вище" за 16:9, тому
+# геометрію обличчя перевіряти саме на цій роздільності.
+width = 1920
+height = 1280
 fullscreen = false
 target_fps = 60
 
@@ -25,6 +26,16 @@ reconnect_max_s = 30.0
 # порожній список означає, що ROBI покаже будь-який домен, який попросить CRM.
 allowed_url_schemes = ["https"]
 allowed_domains = ["example.org"]
+
+[vision]
+# "fake" — записаний сценарій без камери, OpenCV не потрібен.
+# "camera" — справжня камера пристрою; потребує extra `camera` (D-053).
+backend = "fake"
+device_index = 0
+# D-033: достатньо кількох кадрів за секунду й зменшеного кадру.
+fps = 8.0
+detect_width = 320
+min_face_frac = 0.12
 
 [features]
 camera = true

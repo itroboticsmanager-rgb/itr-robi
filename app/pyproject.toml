@@ -12,6 +12,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Необов'язково й навмисно (D-053): найважча залежність проєкту потрібна
+# лише коли vision.backend = "camera". Headless-варіант не тягне Qt/GTK.
+camera = ["opencv-python-headless>=4.10"]
 
 [project.scripts]
 robi = "robi.__main__:main"

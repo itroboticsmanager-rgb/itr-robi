@@ -70,7 +70,19 @@ class App:
         self.tof = FakeToF()
         self.nfc = FakeNfc()
         self.outputs = FakeOutputs()
-        self.vision = FakeVision()
+        # Реальний адаптер імпортується лише коли його справді обрано:
+        # OpenCV — необов'язкова залежність (D-053).
+        if config.vision.backend == "camera":
+            from .vision.camera import CameraVision
+
+            self.vision = CameraVision(
+                device_index=config.vision.device_index,
+                fps=config.vision.fps,
+                detect_width=config.vision.detect_width,
+                min_face_frac=config.vision.min_face_frac,
+            )
+        else:
+            self.vision = FakeVision()
 
         self.modes: dict[ModeName, object] = {
             ModeName.MASCOT: MascotMode(size),

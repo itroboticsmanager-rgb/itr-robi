@@ -36,17 +36,29 @@ def parse_size(text: str) -> tuple[int, int]:
     return int(w), int(h)
 
 
-def bench_face(size: tuple[int, int], seconds: float, with_vision: bool) -> Metrics:
+def make_vision(backend: str):
+    """`fake` не торкається камери; `camera` — справжній адаптер (D-053)."""
+    if backend == "camera":
+        from robi.vision.camera import CameraVision
+
+        return CameraVision()
+    from robi.vision.fake import FakeVision
+
+    return FakeVision()
+
+
+def bench_face(size: tuple[int, int], seconds: float, vision_backend: str | None) -> Metrics:
     """Міряє повний кадр обличчя так, як він виглядає в застосунку."""
     screen = pygame.display.set_mode(size)
     mode = MascotMode(size)
     metrics = Metrics()
 
-    from robi.vision.fake import FakeVision
-
-    vision = FakeVision()
+    with_vision = vision_backend is not None
+    vision = make_vision(vision_backend or "fake")
     if with_vision:
-        vision.initialize()
+        health = vision.initialize()
+        if not health.ok:
+            print(f"  ! vision недоступний: {health.detail}")
         vision.start_capture()
 
     started = time.perf_counter()
@@ -64,6 +76,12 @@ def bench_face(size: tuple[int, int], seconds: float, with_vision: bool) -> Metr
         mode.draw(screen)
         pygame.display.flip()
         metrics.frame(dt)
+
+    if with_vision:
+        st = vision.stats()
+        print(f"  vision: кадрів {st.frames}, з обличчям {st.detections}")
+        vision.stop_capture()
+        vision.shutdown()
 
     return metrics
 
@@ -91,6 +109,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--resolutions", nargs="+", default=["800x480", "1280x720"])
     parser.add_argument("--seconds", type=float, default=6.0)
+    parser.add_argument(
+        "--vision",
+        choices=["fake", "camera"],
+        default="fake",
+        help="джерело детекції для сценарію 'обличчя + vision'; "
+        "camera вмикає справжню камеру (D-053) і потребує extra `camera`",
+    )
     args = parser.parse_args()
 
     pygame.init()
@@ -104,8 +129,8 @@ def main() -> int:
     for text in args.resolutions:
         size = parse_size(text)
         for label, metrics in (
-            (f"{text} обличчя", bench_face(size, args.seconds, with_vision=False)),
-            (f"{text} обличчя + vision", bench_face(size, args.seconds, with_vision=True)),
+            (f"{text} обличчя", bench_face(size, args.seconds, None)),
+            (f"{text} обличчя + {args.vision}", bench_face(size, args.seconds, args.vision)),
             (f"{text} qr", bench_qr(size, args.seconds)),
         ):
             print(f"{label:<28}{metrics.snapshot().as_row()}")

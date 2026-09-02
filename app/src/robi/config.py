@@ -42,12 +42,28 @@ class FeaturesConfig:
 
 
 @dataclass(slots=True)
+class VisionConfig:
+    """Вибір джерела детекції (D-053).
+
+    `fake` програє записаний сценарій без камери й не потребує OpenCV.
+    `camera` бере кадри з пристрою; для нього треба extra `camera`.
+    """
+
+    backend: str = "fake"
+    device_index: int = 0
+    fps: float = 8.0
+    detect_width: int = 320
+    min_face_frac: float = 0.12
+
+
+@dataclass(slots=True)
 class Config:
     device_id: str = "robi-dev"
     site: str = "local"
     display: DisplayConfig = field(default_factory=DisplayConfig)
     crm: CrmConfig = field(default_factory=CrmConfig)
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
 
     @staticmethod
     def load(path: str | Path | None) -> "Config":
@@ -78,7 +94,7 @@ class Config:
 
         c = raw.get("crm", {})
         cfg.crm = CrmConfig(
-            url=str(c.get("url", CrmConfig.url)),
+            url=str(c.get("url", "ws://127.0.0.1:8765")),
             enabled=bool(c.get("enabled", True)),
             reconnect_min_s=float(c.get("reconnect_min_s", 1.0)),
             reconnect_max_s=float(c.get("reconnect_max_s", 30.0)),
@@ -92,6 +108,15 @@ class Config:
             nfc=bool(f.get("nfc", True)),
             voice=bool(f.get("voice", False)),
             rgb=bool(f.get("rgb", True)),
+        )
+
+        v = raw.get("vision", {})
+        cfg.vision = VisionConfig(
+            backend=str(v.get("backend", "fake")),
+            device_index=int(v.get("device_index", 0)),
+            fps=float(v.get("fps", 8.0)),
+            detect_width=int(v.get("detect_width", 320)),
+            min_face_frac=float(v.get("min_face_frac", 0.12)),
         )
 
         cfg.validate()
@@ -108,3 +133,11 @@ class Config:
             raise ConfigError("некоректне вікно reconnect")
         if self.features.voice:
             raise ConfigError("voice ще не реалізовано; лишайте features.voice = false")
+        if self.vision.backend not in ("fake", "camera"):
+            raise ConfigError(f"невідомий vision.backend: {self.vision.backend!r}")
+        if not 0.5 <= self.vision.fps <= 60:
+            raise ConfigError("vision.fps поза розумним діапазоном")
+        if not 120 <= self.vision.detect_width <= 1920:
+            raise ConfigError("vision.detect_width поза розумним діапазоном")
+        if not 0.02 <= self.vision.min_face_frac <= 0.9:
+            raise ConfigError("vision.min_face_frac поза розумним діапазоном")

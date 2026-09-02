@@ -80,3 +80,91 @@ def test_face_leaves_frame_and_returns():
         for event in v.poll(0.1):
             counts.add(event.count)
     assert counts == {0, 1}
+
+
+# --- те саме, але для будь-якої реалізації, а не лише для fake ------------
+#
+# Досі ці гарантії перевірялися на `FakeVision`, у якої камери немає в
+# принципі, — тобто найлегший можливий випадок. Реальний адаптер (D-053)
+# кадр таки тримає, тож саме він і є тим місцем, де межу D-027 можна
+# зламати непомітно. Тести нижче тримають обидві реалізації в одних рамках.
+
+import pytest
+
+from robi.vision.camera import CameraVision
+
+
+def implementations():
+    """CameraVision конструюється без OpenCV: імпорт cv2 живе в initialize()."""
+    return [FakeVision(), CameraVision()]
+
+
+@pytest.mark.parametrize("vision", implementations(), ids=["fake", "camera"])
+def test_no_public_attribute_can_hold_a_frame(vision):
+    # `name` тут — власна назва адаптера ("vision"), а не ім'я людини,
+    # тому з переліку заборонених для атрибутів вона виключена.
+    forbidden_attrs = FORBIDDEN - {"name"}
+    public = {n for n in dir(vision) if not n.startswith("_")}
+    assert not (public & forbidden_attrs), f"межу D-027 зламано: {public & forbidden_attrs}"
+
+
+@pytest.mark.parametrize("vision", implementations(), ids=["fake", "camera"])
+def test_capture_never_starts_by_itself(vision):
+    assert not vision.capturing
+    assert vision.poll(1.0) == []
+
+
+@pytest.mark.parametrize("vision", implementations(), ids=["fake", "camera"])
+def test_stats_shape_is_identical(vision):
+    assert set(dataclasses.asdict(vision.stats())) == {"frames", "detections", "capturing"}
+
+
+@pytest.mark.parametrize("vision", implementations(), ids=["fake", "camera"])
+def test_shutdown_leaves_capture_off(vision):
+    vision.shutdown()
+    assert not vision.capturing
+
+
+def test_camera_without_opencv_degrades_and_stays_silent(monkeypatch):
+    """Без OpenCV адаптер має чесно сказати «не ok», а не впасти.
+
+    Це і є ціна необов'язкової залежності з D-053: застосунок стартує,
+    переходить у degraded і працює далі без камери.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_cv2(name, *args, **kwargs):
+        if name == "cv2":
+            raise ImportError("no cv2")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_cv2)
+
+    v = CameraVision()
+    health = v.initialize()
+    assert not health.ok
+    v.start_capture()
+    assert not v.capturing
+    assert v.poll(1.0) == []
+
+
+def test_camera_geometry_is_normalised_to_minus_one_plus_one():
+    """Центр кадру дає 0.0, кути — ±1: FaceSeen обіцяє саме це."""
+    centre = CameraVision._largest([(40, 30, 20, 20)], 100, 80)
+    assert centre[0] == 1
+    assert centre[1] == pytest.approx(0.0)
+    assert centre[2] == pytest.approx(0.0)
+
+    empty = CameraVision._largest([], 100, 80)
+    assert empty == (0, 0.0, 0.0, 0.0)
+
+
+def test_camera_picks_the_largest_face():
+    """Найбільше обличчя — найближча людина; на неї ROBI й дивиться."""
+    faces = [(0, 0, 10, 10), (60, 40, 30, 30), (20, 20, 5, 5)]
+    count, x, y, size = CameraVision._largest(faces, 100, 80)
+    assert count == 3
+    assert size == pytest.approx(0.3)
+    assert x > 0 and y > 0
