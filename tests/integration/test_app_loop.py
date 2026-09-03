@@ -205,7 +205,10 @@ def test_long_stall_is_clamped_for_logic(app):
     from robi.events import FaceSeen, Source
 
     # Без цього fake vision підкидав би власні події й перезаписував ціль.
-    app.vision.stop_capture()
+    # Глушити адаптер напряму не можна: `_sync_camera` узгоджує стан раз на
+    # секунду й увімкнув би його назад. Вимикаємо так, як розуміє застосунок.
+    app.config.features.camera = False
+    app._sync_camera()
 
     def gaze_after(step_dt: float) -> float:
         mode = app.modes[ModeName.MASCOT]

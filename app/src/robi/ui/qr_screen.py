@@ -41,12 +41,12 @@ class QrScreen:
         n = len(matrix)
         total = (n + QUIET_ZONE * 2) * box
         surf = pygame.Surface((total, total))
-        surf.fill((255, 255, 255))
+        surf.fill(PALETTE.qr_paper)
         for y, row in enumerate(matrix):
             for x, on in enumerate(row):
                 if on:
                     surf.fill(
-                        (0, 0, 0),
+                        PALETTE.qr_ink,
                         pygame.Rect(
                             (x + QUIET_ZONE) * box,
                             (y + QUIET_ZONE) * box,
@@ -78,11 +78,21 @@ class QrScreen:
 
     def draw(self, target: pygame.Surface, value: str, caption: str = "") -> None:
         w, h = self.size
-        target.fill(PALETTE.face_bottom)
+        target.fill(PALETTE.face_top)
 
         code = self._prepare(value)
         top = int(h * 0.06)
-        target.blit(code, (w // 2 - code.get_width() // 2, top))
+        left = w // 2 - code.get_width() // 2
+        shadow_offset = max(5, int(h * 0.012))
+        shadow_radius = max(10, int(h * 0.028))
+        shadow_rect = pygame.Rect(
+            left + shadow_offset,
+            top + shadow_offset,
+            code.get_width(),
+            code.get_height(),
+        )
+        pygame.draw.rect(target, PALETTE.qr_shadow, shadow_rect, border_radius=shadow_radius)
+        target.blit(code, (left, top))
 
         if caption:
             if caption != self._caption_key:

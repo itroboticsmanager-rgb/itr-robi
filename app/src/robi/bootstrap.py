@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from datetime import datetime
 
 import pygame
 
@@ -81,6 +82,8 @@ class App:
                 detect_width=config.vision.detect_width,
                 min_face_frac=config.vision.min_face_frac,
                 mirror=config.vision.mirror,
+                idle_fps=config.vision.idle_fps,
+                idle_after_s=config.vision.idle_after_s,
             )
         else:
             self.vision = FakeVision()
@@ -102,6 +105,7 @@ class App:
 
         self._intent_ttl = 0.0
         self._running = False
+        self._camera_check_acc = 0.0
 
     # -- запуск і зупинка --------------------------------------------------
 
@@ -162,6 +166,14 @@ class App:
         # TTL команд це не зачіпає: координатор живе на годиннику, а не на
         # dt, тож реальна затримка коректно погасить прострочений сценарій.
         sim_dt = min(dt, MAX_STEP_S)
+
+        # Розклад камери перевіряється раз на секунду, а не раз на кадр:
+        # інакше зміна режиму була б єдиним моментом, коли ROBI помічає,
+        # що тихі години настали.
+        self._camera_check_acc += dt
+        if self._camera_check_acc >= 1.0:
+            self._camera_check_acc = 0.0
+            self._sync_camera()
 
         events: list[Event] = []
         events.extend(self._pump_window())
@@ -254,9 +266,19 @@ class App:
         self._sync_camera()
 
     def _sync_camera(self) -> None:
-        """Єдине місце, де вмикається й вимикається захоплення."""
+        """Єдине місце, де вмикається й вимикається захоплення.
+
+        Крім бажання режиму тут діє й розклад: поза тихими годинами
+        камера не вмикається взагалі. Це не економія заради економії —
+        безвентиляторний планшет гріється, а всередині живе акумулятор,
+        якому це скорочує вік.
+        """
         mode = self.modes[self._current]
-        wants = mode.wants_camera() and self.config.features.camera
+        wants = (
+            mode.wants_camera()
+            and self.config.features.camera
+            and self.config.vision.camera_allowed_at(datetime.now().time())
+        )
         if wants and not self.vision.capturing:
             self.vision.start_capture()
         elif not wants and self.vision.capturing:

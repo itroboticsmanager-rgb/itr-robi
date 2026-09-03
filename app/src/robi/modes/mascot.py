@@ -53,22 +53,31 @@ class MascotMode:
     def handle(self, event: Event) -> None:
         if isinstance(event, FaceSeen):
             if event.count > 0:
+                was_away = self._since_face > FACE_LOST_GRACE_S
                 self._since_face = 0.0
                 self.face.look_at(event.x, event.y)
+                if was_away:
+                    self.face.react_greeting()
             return
 
         if isinstance(event, Presence):
             was = self._present
             self._present = event.present
             if event.present and not was:
+                self.face.react_greeting()
                 self._request_accent(PALETTE.accent)
             return
 
         if isinstance(event, Touch):
+            self.face.react_touch(event.x, event.y)
             self._request_accent(PALETTE.ok)
             return
 
         if isinstance(event, NfcTouched):
+            if event.ok:
+                self.face.react_success()
+            else:
+                self.face.react_error()
             self._request_accent(PALETTE.ok if event.ok else PALETTE.error)
 
     def _request_accent(self, rgb: tuple[int, int, int]) -> None:

@@ -51,10 +51,20 @@ class CameraVision:
         min_face_frac: float = 0.08,
         score_threshold: float = 0.6,
         mirror: bool = True,
+        idle_fps: float = 1.0,
+        idle_after_s: float = 3.0,
     ) -> None:
         # D-033: достатньо низької роздільності й кількох кадрів за секунду.
         self._device_index = device_index
         self._interval = 1.0 / max(fps, 0.1)
+        # Стійка порожня більшу частину доби, тож повна частота в спокої —
+        # це детекція порожнього коридору цілодобово. У спокої адаптер
+        # переходить на idle_fps і повертається до повної, щойно когось
+        # побачив. Людина цього не помічає: вона підходить, і ROBI реагує
+        # протягом секунди.
+        self._idle_interval = 1.0 / max(idle_fps, 0.05)
+        self._idle_after_s = idle_after_s
+        self._last_seen = 0.0
         self._detect_width = detect_width
         self._min_face_frac = min_face_frac
         self._score_threshold = score_threshold
@@ -127,6 +137,9 @@ class CameraVision:
             return
         self._capture = cap
         self._stop.clear()
+        # Стартуємо в активному режимі: перед пристроєм цілком може вже
+        # хтось стояти, і зустрічати його сповільненою детекцією не варто.
+        self._last_seen = time.monotonic()
         self._thread = threading.Thread(target=self._run, name="robi-vision", daemon=True)
         self._capturing = True
         self._thread.start()
@@ -190,8 +203,22 @@ class CameraVision:
             # `frame` і `small` виходять зі скоупу тут: далі межі цього
             # циклу зображення не існує ніде.
 
+            if result[0] > 0:
+                self._last_seen = time.monotonic()
+
             elapsed = time.perf_counter() - started
-            self._stop.wait(max(self._interval - elapsed, 0.0))
+            self._stop.wait(max(self._next_interval() - elapsed, 0.0))
+
+    def _next_interval(self) -> float:
+        """Повна частота, поки когось видно; далі — сповільнення.
+
+        Повернення до повної частоти миттєве: щойно обличчя знайдено,
+        наступний кадр іде вже без затримки. Дорого тільки чекати, а не
+        реагувати.
+        """
+        if time.monotonic() - self._last_seen <= self._idle_after_s:
+            return self._interval
+        return self._idle_interval
 
     def _filter(self, faces) -> list:
         """Відкидає надто дрібні знахідки: людина в глибині холу нам не адресат.

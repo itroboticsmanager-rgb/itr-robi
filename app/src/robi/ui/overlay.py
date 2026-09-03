@@ -18,7 +18,9 @@ from .theme import PALETTE
 
 class Overlay:
     def __init__(self, size: tuple[int, int]) -> None:
-        self.visible = True
+        # На рецепції екран є обличчям. Діагностика доступна через F1,
+        # але не має зустрічати відвідувача після запуску.
+        self.visible = False
         self.resize(size)
 
     def resize(self, size: tuple[int, int]) -> None:

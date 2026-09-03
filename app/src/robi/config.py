@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass, field
+from datetime import time as clock_time
 from pathlib import Path
 
 
@@ -60,6 +61,41 @@ class VisionConfig:
     # Віддзеркалення горизонталі: без нього погляд відводиться від людини
     # замість стежити за нею. Причина — в docstring `CameraVision._largest`.
     mirror: bool = True
+    # У спокої детекція сповільнюється: стійка порожня більшу частину доби.
+    idle_fps: float = 1.0
+    idle_after_s: float = 3.0
+    # Тихі години: поза ними камера не вмикається взагалі. Уночі й на
+    # вихідних дивитися нема на кого, а камера в школі, яка працює
+    # цілодобово, ще й важче пояснюється батькам.
+    #
+    # За замовчуванням обмеження вимкнене (однакові значення). Розклад —
+    # це політика конкретного розгортання, і місце їй у конфігурації
+    # пристрою. Якби він жив тут, поведінка коду залежала б від годинника
+    # тієї машини, на якій його запустили, а тести о третій ночі йшли б
+    # іншою гілкою, ніж удень.
+    active_from: str = "00:00"
+    active_to: str = "00:00"
+
+    def window(self) -> tuple[clock_time, clock_time]:
+        return _parse_hhmm(self.active_from), _parse_hhmm(self.active_to)
+
+    def camera_allowed_at(self, now: clock_time) -> bool:
+        """Чи дозволене захоплення о цій порі доби."""
+        start, end = self.window()
+        if start == end:
+            return True
+        if start < end:
+            return start <= now < end
+        # Вікно через північ, наприклад 20:00–07:00.
+        return now >= start or now < end
+
+
+def _parse_hhmm(text: str) -> clock_time:
+    try:
+        hh, _, mm = text.partition(":")
+        return clock_time(int(hh), int(mm))
+    except (ValueError, TypeError) as exc:
+        raise ConfigError(f"час має бути у форматі HH:MM, а не {text!r}") from exc
 
 
 @dataclass(slots=True)
@@ -124,6 +160,10 @@ class Config:
             detect_width=int(v.get("detect_width", 224)),
             min_face_frac=float(v.get("min_face_frac", 0.08)),
             mirror=bool(v.get("mirror", True)),
+            idle_fps=float(v.get("idle_fps", 1.0)),
+            idle_after_s=float(v.get("idle_after_s", 3.0)),
+            active_from=str(v.get("active_from", "00:00")),
+            active_to=str(v.get("active_to", "00:00")),
         )
 
         cfg.validate()
@@ -148,3 +188,8 @@ class Config:
             raise ConfigError("vision.detect_width поза розумним діапазоном")
         if not 0.02 <= self.vision.min_face_frac <= 0.9:
             raise ConfigError("vision.min_face_frac поза розумним діапазоном")
+        if not 0.05 <= self.vision.idle_fps <= self.vision.fps:
+            raise ConfigError("vision.idle_fps має бути в межах від 0.05 до vision.fps")
+        if self.vision.idle_after_s < 0:
+            raise ConfigError("vision.idle_after_s не може бути від'ємним")
+        self.vision.window()  # падає з ConfigError на кривому HH:MM
