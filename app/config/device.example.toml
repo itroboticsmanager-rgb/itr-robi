@@ -17,7 +17,16 @@ target_fps = 60
 
 [crm]
 enabled = true
+# Базова адреса; клієнт сам додає /ws і параметри token та channels.
 url = "ws://127.0.0.1:8765"
+# Числовий id пристрою в CRM: він же `sub` у токені й `<id>` у каналі
+# `device:<id>` (D-056).
+device_no = 1
+# Realtime-токен. **Секрет** — у Git не потрапляє, ставиться під час
+# provisioning (принцип 6). Порожній означає, що пристрій лишається
+# offline і чесно про це звітує, замість стукати без автентифікації.
+# Для розробки: python app/tools/fake_crm.py --print-token --device 1
+token = ""
 reconnect_min_s = 1.0
 reconnect_max_s = 30.0
 

@@ -145,6 +145,8 @@ class App:
                 config.device_id,
                 config.crm.reconnect_min_s,
                 config.crm.reconnect_max_s,
+                device_no=config.crm.device_no,
+                token=config.crm.token,
             )
 
         self._intent_ttl = 0.0

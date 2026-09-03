@@ -26,8 +26,17 @@ class DisplayConfig:
 
 @dataclass(slots=True)
 class CrmConfig:
+    #: Базова адреса real-time каналу; клієнт сам додає `/ws` і параметри.
     url: str = "ws://127.0.0.1:8765"
     enabled: bool = True
+    #: Числовий id пристрою в CRM — він же `sub` у токені й `<id>` у
+    #: каналі `device:<id>` (`D-056`).
+    device_no: int = 1
+    #: Realtime-токен. **Секрет**: у Git не потрапляє, ставиться під час
+    #: provisioning (принцип 6). Порожній означає, що пристрій не має чим
+    #: автентифікуватися — з'єднання не почнеться, і це чесніше, ніж
+    #: стукати в CRM без токена.
+    token: str = ""
     reconnect_min_s: float = 1.0
     reconnect_max_s: float = 30.0
     allowed_url_schemes: tuple[str, ...] = ("https",)
@@ -158,6 +167,8 @@ class Config:
         cfg.crm = CrmConfig(
             url=str(c.get("url", "ws://127.0.0.1:8765")),
             enabled=bool(c.get("enabled", True)),
+            device_no=int(c.get("device_no", 1)),
+            token=str(c.get("token", "")),
             reconnect_min_s=float(c.get("reconnect_min_s", 1.0)),
             reconnect_max_s=float(c.get("reconnect_max_s", 30.0)),
             allowed_url_schemes=tuple(c.get("allowed_url_schemes", ["https"])),
@@ -205,6 +216,8 @@ class Config:
             raise ConfigError("target_fps поза розумним діапазоном")
         if self.crm.reconnect_min_s <= 0 or self.crm.reconnect_max_s < self.crm.reconnect_min_s:
             raise ConfigError("некоректне вікно reconnect")
+        if self.crm.device_no <= 0:
+            raise ConfigError("crm.device_no має бути додатним")
         if self.features.voice:
             raise ConfigError("voice ще не реалізовано; лишайте features.voice = false")
         if self.vision.backend not in ("fake", "camera"):

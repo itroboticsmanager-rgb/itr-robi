@@ -278,7 +278,13 @@ def process_request(connection, request, secret: str = DEV_SECRET):
     return None
 
 
-async def handler(ws, scenario: str, secret: str = DEV_SECRET) -> None:
+async def handler(ws, scenario: str, secret: str = DEV_SECRET, on_message=None) -> None:
+    """`on_message` — гачок для тестів.
+
+    Читач сокета має бути один: якщо тест підключить власний паралельно,
+    вони почнуть відбирати повідомлення один в одного, і збій виглядатиме
+    як загублені повідомлення клієнта.
+    """
     payload = getattr(ws, "robi_payload", None)
     allowed = getattr(ws, "robi_channels", [])
     if payload is None:
@@ -296,6 +302,8 @@ async def handler(ws, scenario: str, secret: str = DEV_SECRET) -> None:
             except json.JSONDecodeError:
                 log(f"сміття: {raw!r}")
                 continue
+            if on_message is not None:
+                on_message(msg)
             kind = msg.get("type")
             if kind == "device.hello":
                 log(f"hello: {msg.get('device_id')} {msg.get('capabilities')}")
