@@ -47,6 +47,23 @@ class Activation:
         return self.expires_at is not None and at >= self.expires_at
 
 
+#: Стеля часу життя будь-якої активації від CRM.
+#:
+#: Пристрій стоїть на рецепції й може будь-якої миті втратити мережу. Поки
+#: її немає, CRM не може ні скасувати команду, ні виправити її — тож
+#: єдиний, хто здатен вивести ROBI з чутливого стану, це він сам.
+#:
+#: Тому команда без строку — не «показувати завжди», а помилка контракту,
+#: яку пристрій виправляє на свою користь. Інакше зниклий `cancel` лишав би
+#: чужий платіжний QR на екрані до приходу адміністратора.
+#:
+#: Звірка стану при перепідключенні цього не замінює: розрив триває саме
+#: тоді, коли звірки не буде. І відновлювати команду після нього було б
+#: гірше — за `D-038` платіжні посилання одноразові, тож «згадати» QR
+#: п'ятихвилинної давнини означає показати прострочений чужий рахунок.
+MAX_CRM_ACTIVATION_S = 300.0
+
+
 class Coordinator:
     """Тримає активний режим і вирішує, хто кого витісняє."""
 
@@ -62,12 +79,14 @@ class Coordinator:
         base: ModeName = ModeName.MASCOT,
         clock: Callable[[], float] = now,
         unsupported: frozenset[ModeName] | None = None,
+        max_activation_s: float = MAX_CRM_ACTIVATION_S,
     ) -> None:
         # Годинник інжектується, бо вся ця логіка — про час: TTL, expiry
         # й витіснення неможливо перевірити на реальному монотонному часі.
         self._clock = clock
         self._base = base
         self.unsupported = self.UNSUPPORTED if unsupported is None else unsupported
+        self._max_activation = max_activation_s
         self._active = Activation(base, Priority.BACKGROUND, clock())
         self._seen_commands: dict[str, CommandResult] = {}
 
@@ -149,7 +168,7 @@ class Coordinator:
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unknown_mode")
             if mode in self.unsupported:
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unsupported_mode")
-            ttl = _ttl_from(cmd, at)
+            ttl = self._bounded_ttl(_ttl_from(cmd, at))
             ok = self.request(mode, Priority.CRM, ttl, cmd.command_id, at, cmd.payload)
             return CommandResult(
                 cmd.command_id,
@@ -160,7 +179,7 @@ class Coordinator:
         if cmd.kind is CommandKind.SHOW_QR:
             if not cmd.payload.get("value"):
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, "empty_payload")
-            ttl = _ttl_from(cmd, at) or 15.0
+            ttl = self._bounded_ttl(_ttl_from(cmd, at) or 15.0)
             ok = self.request(ModeName.QR, Priority.CRM, ttl, cmd.command_id, at, cmd.payload)
             return CommandResult(
                 cmd.command_id,
@@ -185,6 +204,21 @@ class Coordinator:
             drop = len(self._seen_commands) - limit
             for key in list(self._seen_commands)[:drop]:
                 del self._seen_commands[key]
+
+    def _bounded_ttl(self, ttl: float | None) -> float:
+        """Обмежує час життя команди від CRM.
+
+        `None` означає, що CRM строку не назвала. Це не «показувати
+        завжди»: пристрій, який втратив мережу, більше не отримає ні
+        `cancel`, ні виправлення, тож вічна активація перетворюється на
+        застряглий екран до приходу людини.
+
+        Явний строк теж обмежується: ризик той самий, різниця лише в тому,
+        чи назвала CRM велике число навмисно.
+        """
+        if ttl is None:
+            return self._max_activation
+        return min(ttl, self._max_activation)
 
     # -- взаємодія користувача --------------------------------------------
 
