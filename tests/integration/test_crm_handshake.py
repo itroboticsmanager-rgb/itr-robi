@@ -104,19 +104,21 @@ def test_wrong_route_is_refused(server):
     assert not ok
 
 
-def test_sync_returns_the_desired_state(server):
-    """Осердя контракту: пристрій питає, що показувати, а не сподівається."""
+def test_hello_is_accepted_and_does_not_break_the_link(server):
+    """Пристрій відрекомендовується — і на цьому діалог закінчується.
+
+    Звірки стану тут немає навмисно: небезпечний випадок стається, поки
+    зв'язку немає, тож питати «що показувати» при його поверненні вже
+    пізно. За вихід із чутливого стану відповідає стеля часу життя
+    активації на самому пристрої.
+    """
     loop, port = server
-    ok, reply = connect(
+    ok, _ = connect(
         loop,
         url(port, mint(1), "device:1"),
-        send={"type": "device.sync"},
-        expect_reply=True,
+        send={"type": "device.hello", "device_id": "robi-test"},
     )
     assert ok
-    assert reply["event"] == "device.state"
-    assert reply["data"]["mode"] == "mascot"
-    assert "ts" in reply
 
 
 def test_admin_may_watch_a_device(server):

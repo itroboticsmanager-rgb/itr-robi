@@ -20,11 +20,12 @@
     python app/tools/fake_crm.py
     python app/tools/fake_crm.py --scenario phishing
 
-**Звірка стану — основа, а не додаток.** `POST /broadcast` у справжній
-CRM є fire-and-forget: пристрій, який у той момент перепідключався,
-команду просто не побачить. Тому надійність тут будується не на доставці,
-а на тому, що пристрій після кожного з'єднання питає «що я маю
-показувати зараз» (`device.sync` → `device.state`).
+**Звірки стану тут навмисно немає.** `POST /broadcast` у справжній CRM є
+fire-and-forget, і спокуса — навчити пристрій питати «що мені показувати»
+при кожному підключенні. Але небезпечний випадок стається саме тоді, коли
+зв'язку немає, і питання при його поверненні вже нічого не рятує. За це
+відповідає стеля часу життя активації на самому пристрої, а не діалог
+із сервером.
 """
 
 from __future__ import annotations
@@ -161,22 +162,10 @@ def command(kind: str, payload: dict, expires_in_ms: int | None = None, cid: str
     return envelope(kind, data)
 
 
-class Session:
-    """Бажаний стан пристрою — те, що він отримає у відповідь на `device.sync`."""
-
-    def __init__(self) -> None:
-        self.mode = "mascot"
-        self.payload: dict = {}
-        self.command_id: str | None = None
-
-    def as_data(self) -> dict:
-        return {"mode": self.mode, "payload": self.payload, "command_id": self.command_id}
-
-
 # -- сценарії --------------------------------------------------------------
 
 
-async def scenario_normal(ws, session: Session) -> None:
+async def scenario_normal(ws) -> None:
     """Звичайний цикл: показати QR, повернутися до обличчя, повторити."""
     while True:
         await asyncio.sleep(8)
@@ -188,7 +177,7 @@ async def scenario_normal(ws, session: Session) -> None:
         ))
 
 
-async def scenario_duplicate(ws, session: Session) -> None:
+async def scenario_duplicate(ws) -> None:
     """Той самий command_id двічі: фізична дія не має повторитися."""
     cid = uuid.uuid4().hex[:12]
     await asyncio.sleep(3)
@@ -202,7 +191,7 @@ async def scenario_duplicate(ws, session: Session) -> None:
         await asyncio.sleep(1)
 
 
-async def scenario_expired(ws, session: Session) -> None:
+async def scenario_expired(ws) -> None:
     """Прострочена команда має бути відхилена, а не показана."""
     await asyncio.sleep(3)
     await ws.send(command(
@@ -212,7 +201,7 @@ async def scenario_expired(ws, session: Session) -> None:
     ))
 
 
-async def scenario_phishing(ws, session: Session) -> None:
+async def scenario_phishing(ws) -> None:
     """Головна перевірка D-038: CRM просить показати чужий домен."""
     await asyncio.sleep(3)
     for url in (
@@ -225,7 +214,7 @@ async def scenario_phishing(ws, session: Session) -> None:
         await asyncio.sleep(2)
 
 
-async def scenario_idle(ws, session: Session) -> None:
+async def scenario_idle(ws) -> None:
     """Нічого не надсилає: для тестів, де важлива лише поведінка з'єднання."""
     await asyncio.Future()
 
@@ -293,8 +282,7 @@ async def handler(ws, scenario: str, secret: str = DEV_SECRET, on_message=None) 
         return
 
     log(f"підключився {payload['role']}:{payload['sub']} → {allowed}, сценарій: {scenario}")
-    session = Session()
-    sender = asyncio.create_task(SCENARIOS[scenario](ws, session))
+    sender = asyncio.create_task(SCENARIOS[scenario](ws))
     try:
         async for raw in ws:
             try:
@@ -307,11 +295,6 @@ async def handler(ws, scenario: str, secret: str = DEV_SECRET, on_message=None) 
             kind = msg.get("type")
             if kind == "device.hello":
                 log(f"hello: {msg.get('device_id')} {msg.get('capabilities')}")
-            elif kind == "device.sync":
-                # Осердя контракту: пристрій питає, що він має показувати,
-                # замість сподівання, що не проґавив жодної команди.
-                await ws.send(envelope("device.state", session.as_data()))
-                log("sync → віддано бажаний стан")
             elif kind == "command.status":
                 reason = f" ({msg['reason']})" if msg.get("reason") else ""
                 log(f"{msg.get('command_id')}: {msg.get('status')}{reason}")

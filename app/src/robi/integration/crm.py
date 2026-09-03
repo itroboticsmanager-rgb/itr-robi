@@ -11,13 +11,17 @@ Reconnect з backoff і jitter; прострочені команди не ві�
 `/ws?token=<jwt>&channels=device:<id>`, вхідні повідомлення у вигляді
 `{event, data, ts}`.
 
-**Після кожного з'єднання клієнт питає, що показувати.** Мовлення в CRM
-є fire-and-forget: команда, надіслана поки пристрій перепідключався,
-втрачається безслідно, і жоден `command_id` цього не виправить. Тому
-надійність тут будується на звірці бажаного стану (`device.sync` →
-`device.state`), а не на сподіванні, що нічого не проґавлено. Практична
-різниця видима на стійці: після мережевого збою пристрій повертається до
-маскота сам, замість лишитися з чужим платіжним QR, бо `cancel` не дійшов.
+**Клієнт не питає CRM, що показувати, і це навмисно.** Мовлення в CRM є
+fire-and-forget, тож команда, надіслана поки пристрій перепідключався,
+втрачається. Спокуса — запитати бажаний стан при відновленні зв'язку,
+але це не той інструмент: небезпечний випадок стається саме тоді, коли
+зв'язку немає, і жодне питання при поверненні його не застає.
+
+Пристрій, до якого не достукатися, мусить виходити з чутливого стану
+сам. За це відповідає стеля часу життя активації в координаторі
+(`MAX_CRM_ACTIVATION_S`), а не діалог із сервером. Відновлювати
+попередню команду було б навіть гірше: за `D-038` платіжні посилання
+одноразові, тож повторно показаний QR — це прострочений чужий рахунок.
 """
 
 from __future__ import annotations
@@ -42,8 +46,6 @@ from ..events import Command, CommandKind, CommandResult, now
 #: простою вивалило б на пристрій усе, що накопичилось.
 INBOX_LIMIT = 64
 
-#: Відповідь CRM на `device.sync`: бажаний стан пристрою.
-DEVICE_STATE_EVENT = "device.state"
 
 
 @dataclass(slots=True)
@@ -79,7 +81,6 @@ class CrmClient:
         self.outbox: queue.Queue[dict] = queue.Queue(maxsize=INBOX_LIMIT)
 
         self.status = LinkStatus()
-        self._sync_seq = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -256,9 +257,6 @@ class CrmClient:
             "device_id": self._device_id,
             "capabilities": ["mascot", "qr"],
         }))
-        # Одразу питаємо, що показувати. Це не ввічливість, а єдиний
-        # спосіб дізнатися про команди, надіслані поки нас не було.
-        await ws.send(json.dumps({"type": "device.sync"}))
 
     async def _pump(self, ws) -> None:
         async def reader() -> None:
@@ -306,9 +304,6 @@ class CrmClient:
         if not isinstance(data, dict):
             data = {}
 
-        if event == DEVICE_STATE_EVENT:
-            return self._state_command(data)
-
         try:
             kind = CommandKind(event)
         except ValueError:
@@ -331,27 +326,3 @@ class CrmClient:
 
         return Command(kind=kind, command_id=command_id, payload=payload, expires_at=expires_at)
 
-    def _state_command(self, data: dict) -> Command | None:
-        """Відповідь на `device.sync` — бажаний стан, а не команда.
-
-        Виражаємо його наявним `set_mode` навмисно: інакше в системі
-        з'явився б другий шлях зміни режиму, який довелося б окремо
-        узгоджувати з пріоритетами координатора. Тут же він проходить
-        рівно ті самі перевірки, що й команда від CRM.
-
-        `command_id` із префіксом `sync:` — щоб у журналі було видно, що
-        режим змінився звіркою, а не надісланою командою.
-        """
-        mode = str(data.get("mode") or "").strip()
-        if not mode:
-            return None
-        payload = data.get("payload")
-        if not isinstance(payload, dict):
-            payload = {}
-        self._sync_seq += 1
-        return Command(
-            kind=CommandKind.SET_MODE,
-            command_id=f"sync:{self._sync_seq}",
-            payload={"mode": mode, **payload},
-            expires_at=None,
-        )

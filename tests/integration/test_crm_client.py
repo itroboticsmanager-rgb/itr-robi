@@ -101,30 +101,20 @@ def test_client_connects_and_says_hello(server):
         c.stop()
 
 
-def test_client_asks_what_to_show_on_connect(server):
-    """Осердя контракту: мовлення CRM є fire-and-forget."""
+def test_client_does_not_ask_what_to_show(server):
+    """Звірки стану немає навмисно.
+
+    Спокуса запитати «що показувати» при кожному підключенні зрозуміла,
+    але небезпечний випадок стається саме тоді, коли зв'язку немає, і
+    питання при його поверненні нічого не рятує. За вихід із чутливого
+    стану відповідає стеля часу життя активації, а не діалог із сервером.
+    """
     c = client_for(server)
     c.start()
     try:
-        assert wait_for(lambda: any(m.get("type") == "device.sync" for m in server.seen))
-    finally:
-        c.stop()
-
-
-def test_desired_state_arrives_as_a_command(server):
-    c = client_for(server)
-    got: list = []
-
-    def collected() -> bool:
-        got.extend(c.drain())
-        return any(cmd.command_id.startswith("sync:") for cmd in got)
-
-    c.start()
-    try:
-        assert collected() or wait_for(collected, timeout=5.0), f"звірка не дійшла: {got}"
-        sync = next(cmd for cmd in got if cmd.command_id.startswith("sync:"))
-        assert sync.kind is CommandKind.SET_MODE
-        assert sync.payload["mode"] == "mascot"
+        assert wait_for(lambda: any(m.get("type") == "device.hello" for m in server.seen))
+        time.sleep(0.5)
+        assert not any(m.get("type") == "device.sync" for m in server.seen)
     finally:
         c.stop()
 
