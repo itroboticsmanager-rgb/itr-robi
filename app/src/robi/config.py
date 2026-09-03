@@ -32,10 +32,14 @@ class CrmConfig:
     #: Числовий id пристрою в CRM — він же `sub` у токені й `<id>` у
     #: каналі `device:<id>` (`D-056`).
     device_no: int = 1
-    #: Realtime-токен. **Секрет**: у Git не потрапляє, ставиться під час
-    #: provisioning (принцип 6). Порожній означає, що пристрій не має чим
-    #: автентифікуватися — з'єднання не почнеться, і це чесніше, ніж
-    #: стукати в CRM без токена.
+    #: Адреса обміну секрету на короткий realtime-токен.
+    token_url: str = ""
+    #: Файл із секретом пристрою. **Не конфігурація, а обліковий запис**:
+    #: тримається окремо саме тому, що `device.toml` не соромно показати
+    #: чи покласти в Git, а секрет — ні (принцип 6).
+    secret_path: str = ""
+    #: Готовий токен. Лише для розробки й тестів: справжній живе хвилини,
+    #: тож у бойовому конфігу тут порожньо, а токен береться обміном.
     token: str = ""
     reconnect_min_s: float = 1.0
     reconnect_max_s: float = 30.0
@@ -168,6 +172,8 @@ class Config:
             url=str(c.get("url", "ws://127.0.0.1:8765")),
             enabled=bool(c.get("enabled", True)),
             device_no=int(c.get("device_no", 1)),
+            token_url=str(c.get("token_url", "")),
+            secret_path=str(c.get("secret_path", "")),
             token=str(c.get("token", "")),
             reconnect_min_s=float(c.get("reconnect_min_s", 1.0)),
             reconnect_max_s=float(c.get("reconnect_max_s", 30.0)),

@@ -28,7 +28,10 @@ import queue
 import random
 import threading
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import quote
 
 import websockets
@@ -59,11 +62,16 @@ class CrmClient:
         reconnect_max_s: float = 30.0,
         device_no: int = 1,
         token: str = "",
+        token_url: str = "",
+        secret_path: str = "",
     ) -> None:
         self._url = url.rstrip("/")
         self._device_id = device_id
         self._device_no = device_no
+        self._static_token = token
         self._token = token
+        self._token_url = token_url
+        self._secret_path = secret_path
         self._min = reconnect_min_s
         self._max = reconnect_max_s
 
@@ -117,6 +125,78 @@ class CrmClient:
 
     # -- внутрішнє ---------------------------------------------------------
 
+    # -- обмін секрету на токен -------------------------------------------
+
+    def read_secret(self) -> str:
+        """Читає секрет із файлу. Порожній файл дорівнює відсутньому.
+
+        Секрет живе окремо від `device.toml` навмисно: конфігурацію не
+        соромно показати чи покласти в Git, а це — обліковий запис
+        пристрою (принцип 6). У журнал він не потрапляє ніколи.
+        """
+        if not self._secret_path:
+            return ""
+        try:
+            return Path(self._secret_path).read_text(encoding="ascii").strip()
+        except OSError:
+            return ""
+
+    async def _ensure_token(self) -> bool:
+        """Готує токен до підключення. False — причина вже в `status`."""
+        if self._static_token:
+            self._token = self._static_token
+            return True
+        if not self._token_url:
+            self.status = LinkStatus(connected=False, last_error="no_token_url")
+            return False
+
+        secret = self.read_secret()
+        if not secret:
+            self.status = LinkStatus(connected=False, last_error="no_secret")
+            return False
+
+        # urllib замість http-бібліотеки: залежності проєкту навмисно
+        # мінімальні, а запит тут рідкий і простий. У потік винесено, бо
+        # мережа в циклі asyncio блокувати не має.
+        token, error = await asyncio.to_thread(self._exchange, secret)
+        if token is None:
+            self.status = LinkStatus(
+                connected=False,
+                attempts=self.status.attempts + 1,
+                last_error=error or "token_failed",
+            )
+            return False
+        self._token = token
+        return True
+
+    def _exchange(self, secret: str) -> tuple[str | None, str]:
+        """Синхронний обмін. Секрет іде в заголовку, не в адресі.
+
+        Адреси осідають у логах проксі та в історії; заголовки — ні.
+        """
+        request = urllib.request.Request(
+            self._token_url,
+            data=b"",
+            method="POST",
+            headers={"Authorization": f"Bearer {secret}"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # Код відмови важливий: 401 означає, що секрет не той, і
+            # повторювати його вічно немає сенсу — це справа адміністратора.
+            return None, f"token_http_{exc.code}"
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            return None, f"token_net_{type(exc).__name__}"
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None, "token_bad_response"
+
+        token = payload.get("token")
+        if not isinstance(token, str) or not token:
+            return None, "token_missing"
+        return token, ""
+
     def endpoint(self) -> str:
         """Адреса з токеном і каналом. Токен у логи не потрапляє."""
         channel = f"device:{self._device_no}"
@@ -126,14 +206,24 @@ class CrmClient:
         asyncio.run(self._loop())
 
     async def _loop(self) -> None:
-        if not self._token:
-            # Без токена стукати в CRM немає сенсу: сервер відмовить на
-            # рукостисканні. Чесніше стояти offline і сказати про причину.
-            self.status = LinkStatus(connected=False, last_error="no_token")
-            return
-
         delay = self._min
         while not self._stop.is_set():
+            # Свіжий токен береться перед кожним підключенням, і цього
+            # досить: сервер перевіряє його на рукостисканні, а далі
+            # з'єднання живе, навіть коли токен уже протух. Фонового
+            # оновлення не треба — воно тільки додало б таймерів.
+            #
+            # Невдача обміну не кидає виняток навмисно: інакше загальний
+            # обробник нижче перезаписав би точну причину («секрет не той»,
+            # «немає файлу») на безлике `ConnectionError`, а саме заради
+            # цих причин `_ensure_token` їх і розрізняє.
+            if not await self._ensure_token():
+                if self._stop.is_set():
+                    return
+                await asyncio.sleep(delay * random.uniform(0.7, 1.3))
+                delay = min(self._max, delay * 2)
+                continue
+
             try:
                 async with websockets.connect(self.endpoint(), open_timeout=5) as ws:
                     self.status = LinkStatus(connected=True, attempts=0)

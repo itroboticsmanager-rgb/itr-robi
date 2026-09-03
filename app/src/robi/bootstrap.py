@@ -147,6 +147,8 @@ class App:
                 config.crm.reconnect_max_s,
                 device_no=config.crm.device_no,
                 token=config.crm.token,
+                token_url=config.crm.token_url,
+                secret_path=config.crm.secret_path,
             )
 
         self._intent_ttl = 0.0

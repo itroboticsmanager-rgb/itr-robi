@@ -129,12 +129,12 @@ def test_desired_state_arrives_as_a_command(server):
         c.stop()
 
 
-def test_without_token_client_stays_offline(server):
-    """Стукати в CRM без токена немає сенсу — сервер відмовить на рукостисканні."""
+def test_without_any_credentials_client_stays_offline(server):
+    """Стукати в CRM без нічого немає сенсу — сервер відмовить на рукостисканні."""
     c = client_for(server, token="")
     c.start()
     try:
-        assert wait_for(lambda: c.status.last_error == "no_token")
+        assert wait_for(lambda: c.status.last_error == "no_token_url")
         assert not c.status.connected
     finally:
         c.stop()
