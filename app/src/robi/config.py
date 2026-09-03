@@ -131,6 +131,21 @@ class ContentConfig:
 
 
 @dataclass(slots=True)
+class BannersConfig:
+    """Вітрина: звідки беруться банери й де лежить їхній кеш (`D-058`).
+
+    Секрет не дублюється: використовується той самий `crm.secret_path`,
+    бо це той самий пристрій із тим самим ключем.
+    """
+
+    url: str = ""
+    cache_dir: str = ""
+    #: Як часто перепитувати CRM. Банери змінюються рідко, а зайві запити
+    #: з пристрою в холі нікому не потрібні.
+    refresh_s: float = 900.0
+
+
+@dataclass(slots=True)
 class Config:
     device_id: str = "robi-dev"
     site: str = "local"
@@ -139,6 +154,7 @@ class Config:
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     content: ContentConfig = field(default_factory=ContentConfig)
+    banners: BannersConfig = field(default_factory=BannersConfig)
 
     @staticmethod
     def load(path: str | Path | None) -> "Config":
@@ -210,6 +226,13 @@ class Config:
             timeout_s=float(k.get("timeout_s", 45.0)),
         )
 
+        b = raw.get("banners", {})
+        cfg.banners = BannersConfig(
+            url=str(b.get("url", "")),
+            cache_dir=str(b.get("cache_dir", "")),
+            refresh_s=float(b.get("refresh_s", 900.0)),
+        )
+
         cfg.validate()
         return cfg
 
@@ -241,3 +264,5 @@ class Config:
         self.vision.window()  # падає з ConfigError на кривому HH:MM
         if not 5.0 <= self.content.timeout_s <= 600.0:
             raise ConfigError("content.timeout_s поза розумним діапазоном")
+        if self.banners.refresh_s < 60.0:
+            raise ConfigError("banners.refresh_s не може бути меншим за хвилину")

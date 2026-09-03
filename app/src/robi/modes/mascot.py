@@ -14,6 +14,8 @@ from ..events import Event, FaceSeen, Intent, NfcTouched, Presence, Swipe, Touch
 from ..state.coordinator import ModeName
 from ..ui.face import FaceRenderer
 from ..mascot_state import MascotState, parse as parse_state
+from ..banners import Banner
+from ..ui.showcase import Showcase
 from ..ui.theme import PALETTE
 
 #: Скільки секунд без детекції обличчя треба, щоб ROBI повернув погляд
@@ -48,6 +50,17 @@ class MascotMode:
         self._pending_accent: tuple[int, int, int] | None = None
         self._interactive = False
         self._idle_since = 0.0
+
+        # Вітрина й друге обличчя — для смужки. Два підготовлені рендери
+        # замість одного з перебудовою: `resize` наново готує всі поверхні,
+        # і робити це під час жесту означало б ривок саме в той момент,
+        # коли людина дивиться на екран.
+        self.showcase = Showcase(size)
+        self.strip_face = FaceRenderer(self.showcase.face_size())
+        self.banners: list[Banner] = []
+        self.buttons: list[tuple[str, str]] = []
+        self._pending_node: str | None = None
+        self._image_for = lambda banner: None
 
     def wants_camera(self) -> bool:
         """Камера працює лише в інтерактивному режимі.
@@ -89,6 +102,8 @@ class MascotMode:
 
     def resize(self, size: tuple[int, int]) -> None:
         self.face.resize(size)
+        self.showcase.resize(size)
+        self.strip_face.resize(self.showcase.face_size())
 
     # -- інтерактивний режим ------------------------------------------
 
@@ -115,8 +130,12 @@ class MascotMode:
         if isinstance(event, Swipe):
             # Тягнути вниз — розгорнути. Вгору — згорнути назад, щоб вихід
             # був таким самим жестом, а не лише очікуванням таймера.
+            # Розгортає лише жест, що почався на смужці ROBI: інакше
+            # горизонтальне гортання каруселі з невеликим нахилом вниз
+            # раптово відкривало б обличчя на весь екран.
             if event.direction == "down" and not self._interactive:
-                self.expand()
+                if self.showcase.hit_strip(event.x, event.y):
+                    self.expand()
             elif event.direction == "up" and self._interactive:
                 self.collapse()
             return
@@ -141,6 +160,14 @@ class MascotMode:
             return
 
         if isinstance(event, Touch):
+            # У вітрині дотик по кнопці відкриває гілку меню, а не гладить
+            # обличчя: воно там лише визирає зі смужки.
+            if not self._interactive and self.buttons:
+                index = self.showcase.hit_button(event.x, event.y, len(self.buttons))
+                if index is not None:
+                    self._pending_node = self.buttons[index][1]
+                    return
+
             # Дотик — єдине, що продовжує інтерактивний режим.
             self._idle_since = 0.0
             self.face.react_touch(event.x, event.y)
@@ -163,7 +190,20 @@ class MascotMode:
         self._pending_accent = rgb
         self._accent_cooldown = ACCENT_COOLDOWN_S
 
+    def take_pending_node(self) -> str | None:
+        """Кнопка вітрини просить відкрити гілку меню.
+
+        Режим лише повідомляє про намір: рішення, хто займає екран,
+        лишається за координатором (`architecture.md`).
+        """
+        node, self._pending_node = self._pending_node, None
+        return node
+
     def update(self, dt: float) -> Intent | None:
+        if not self._interactive:
+            self.showcase.update(dt, len(self.banners))
+            self.strip_face.update(dt)
+
         if self._interactive:
             self._idle_since += dt
             if self._idle_since >= INTERACTIVE_TIMEOUT_S:
@@ -183,4 +223,12 @@ class MascotMode:
         return None
 
     def draw(self, surface: pygame.Surface) -> None:
+        if not self._interactive:
+            face = pygame.Surface(self.showcase.face_size())
+            self.strip_face.draw(face)
+            self.showcase.draw(
+                surface, face, self.banners,
+                [label for label, _ in self.buttons], self._image_for,
+            )
+            return
         self.face.draw(surface)

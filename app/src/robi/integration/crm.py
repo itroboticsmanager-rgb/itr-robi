@@ -192,6 +192,10 @@ class CrmClient:
             return None, f"token_net_{type(exc).__name__}"
         except (json.JSONDecodeError, UnicodeDecodeError):
             return None, "token_bad_response"
+        except UnicodeEncodeError:
+            # Заголовки HTTP кодуються в latin-1: секрет із кирилицею
+            # валив би обмін винятком замість зрозумілої причини.
+            return None, "token_bad_secret"
 
         token = payload.get("token")
         if not isinstance(token, str) or not token:

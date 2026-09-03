@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
 import pygame
 
+from .banners import BannerStore
 from .config import Config
 from .content import Content, ContentError
 from .events import (
@@ -169,9 +171,77 @@ class App:
                 secret_path=config.crm.secret_path,
             )
 
+        self._banners = self._make_banner_store(config)
+        self._banner_images: dict[int, object] = {}
+        self._banner_thread: threading.Thread | None = None
+        self._banner_stop = threading.Event()
+        self._wire_showcase()
+
         self._intent_ttl = 0.0
         self._running = False
         self._press: tuple[float, float] | None = None
+
+    @staticmethod
+    def _make_banner_store(config: Config) -> BannerStore | None:
+        if not config.banners.cache_dir:
+            return None
+        return BannerStore(config.banners.cache_dir)
+
+    def _wire_showcase(self) -> None:
+        """Дає вітрині те, що вона показує: банери з кешу й кнопки з меню.
+
+        Кнопки беруться з кореня контент-меню (`D-048`), а не з окремого
+        списку: два переліки того самого розійшлися б першої ж правки.
+        """
+        mascot = self.modes.get(ModeName.MASCOT)
+        if mascot is None:
+            return
+        if self._banners is not None:
+            mascot.banners = self._banners.load()
+            mascot._image_for = self._banner_image
+        if self.content is not None:
+            root = self.content.node(self.content.root)
+            mascot.buttons = [
+                (self.content.label_for(node_id), node_id) for node_id in root.items[:4]
+            ]
+
+    def _banner_image(self, banner):
+        """Картинка з кешу. Битий чи відсутній файл дає банер без картинки."""
+        if self._banners is None:
+            return None
+        cached = self._banner_images.get(banner.id)
+        if cached is not None:
+            return cached
+        path = self._banners.image_path(banner)
+        if not path.is_file():
+            return None
+        try:
+            surface = pygame.image.load(str(path)).convert_alpha()
+        except pygame.error:
+            return None
+        self._banner_images[banner.id] = surface
+        return surface
+
+    def _refresh_banners_forever(self) -> None:
+        """Оновлення вітрини у власному потоці.
+
+        Мережа в головному циклі означала б завмирання кадру, а вітрина
+        стоїть перед людьми: рвана анімація помітніша за старий банер.
+        """
+        secret = ""
+        if self.crm is not None:
+            secret = self.crm.read_secret()
+        while not self._banner_stop.is_set():
+            if self._banners is not None and self.config.banners.url and secret:
+                ok, _ = self._banners.refresh(self.config.banners.url, secret)
+                if ok:
+                    mascot = self.modes.get(ModeName.MASCOT)
+                    if mascot is not None:
+                        # Список замінюється цілком, а кеш картинок чиститься:
+                        # інакше зниклий банер лишався б у пам'яті назавжди.
+                        mascot.banners = self._banners.load()
+                        self._banner_images.clear()
+            self._banner_stop.wait(self.config.banners.refresh_s)
 
     @staticmethod
     def _load_content(config: Config) -> Content | None:
@@ -210,7 +280,14 @@ class App:
         if self.crm is not None:
             self.crm.start()
 
+        if self._banners is not None and self.config.banners.url:
+            self._banner_thread = threading.Thread(
+                target=self._refresh_banners_forever, name="robi-banners", daemon=True
+            )
+            self._banner_thread.start()
+
     def shutdown(self) -> None:
+        self._banner_stop.set()
         if self.machine.state is not SystemState.SHUTTING_DOWN:
             self.machine.to(SystemState.SHUTTING_DOWN, "requested")
         if self.crm is not None:
@@ -273,6 +350,18 @@ class App:
         # Ціна щокадрової перевірки — кілька порівнянь при бюджеті 16.7 мс,
         # з яких рендер займає 2.4.
         self._sync_camera()
+
+        # Кнопка вітрини просить відкрити гілку меню. Як і в `_route_touches`,
+        # пріоритет захоплює той режим, який дію справді відкриває.
+        pending = getattr(mode, "take_pending_node", None)
+        node = pending() if pending is not None else None
+        if node and ModeName.INFO in self.modes:
+            self.coordinator.request(
+                ModeName.INFO,
+                Priority.USER,
+                self.config.content.timeout_s,
+                payload={"node": node},
+            )
 
         intent = mode.update(sim_dt)
         if mode.wants_release():

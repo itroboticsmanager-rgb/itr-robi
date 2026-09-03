@@ -86,6 +86,15 @@ assets = "assets/content"
 # Скільки меню чекає на дотик, перш ніж повернутися в mascot.
 timeout_s = 45.0
 
+[banners]
+# Вітрина (D-058). Банери беруться з CRM тим самим секретом пристрою, що
+# й realtime-токен — це той самий пристрій із тим самим ключем.
+url = "https://crm.itrobotics.com.ua/api/device/banners"
+# Кеш обов'язковий, а не бажаний: мережа на рецепції ненадійна, а порожня
+# вітрина об 8:30 — найгірший момент для «зараз нема зв'язку».
+cache_dir = "C:/ROBI/cache/banners"
+refresh_s = 900.0
+
 [features]
 camera = true
 nfc = true
