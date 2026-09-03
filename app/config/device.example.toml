@@ -59,6 +59,15 @@ idle_after_s = 3.0
 active_from = "07:00"
 active_to = "20:00"
 
+[content]
+# Контент-меню (D-048). Порожній path означає, що меню на цьому пристрої
+# немає: mascot і qr працюють без нього, а команда CRM на `info` буде
+# чесно відхилена як непідтримана.
+path = "config/content.example.toml"
+assets = "assets/content"
+# Скільки меню чекає на дотик, перш ніж повернутися в mascot.
+timeout_s = 45.0
+
 [features]
 camera = true
 nfc = true

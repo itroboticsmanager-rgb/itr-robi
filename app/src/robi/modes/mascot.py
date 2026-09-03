@@ -41,6 +41,9 @@ class MascotMode:
     def wants_camera(self) -> bool:
         return True
 
+    def wants_release(self) -> bool:
+        return False
+
     def enter(self, payload: dict) -> None:
         self._since_face = 999.0
 

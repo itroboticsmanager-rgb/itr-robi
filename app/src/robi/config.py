@@ -99,6 +99,25 @@ def _parse_hhmm(text: str) -> clock_time:
 
 
 @dataclass(slots=True)
+class ContentConfig:
+    """Звідки брати контент-меню (`D-048`).
+
+    Порожній `path` означає, що меню на цьому пристрої немає. Це не
+    аварія: `mascot` і `qr` працюють без нього, а команда CRM на `info`
+    буде чесно відхилена як непідтримана — краще, ніж відкрити порожній
+    екран перед людиною.
+    """
+
+    path: str = ""
+    assets: str = ""
+    #: Скільки меню чекає на дотик, перш ніж повернутися в `mascot`.
+    #: Компроміс: батько читає опис курсу довше, ніж тицяє в список, але
+    #: залишений екран не має стояти вічно — наступний відвідувач мусить
+    #: побачити маскота, а не чужу відкриту сторінку.
+    timeout_s: float = 45.0
+
+
+@dataclass(slots=True)
 class Config:
     device_id: str = "robi-dev"
     site: str = "local"
@@ -106,6 +125,7 @@ class Config:
     crm: CrmConfig = field(default_factory=CrmConfig)
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    content: ContentConfig = field(default_factory=ContentConfig)
 
     @staticmethod
     def load(path: str | Path | None) -> "Config":
@@ -166,6 +186,13 @@ class Config:
             active_to=str(v.get("active_to", "00:00")),
         )
 
+        k = raw.get("content", {})
+        cfg.content = ContentConfig(
+            path=str(k.get("path", "")),
+            assets=str(k.get("assets", "")),
+            timeout_s=float(k.get("timeout_s", 45.0)),
+        )
+
         cfg.validate()
         return cfg
 
@@ -193,3 +220,5 @@ class Config:
         if self.vision.idle_after_s < 0:
             raise ConfigError("vision.idle_after_s не може бути від'ємним")
         self.vision.window()  # падає з ConfigError на кривому HH:MM
+        if not 5.0 <= self.content.timeout_s <= 600.0:
+            raise ConfigError("content.timeout_s поза розумним діапазоном")

@@ -27,6 +27,9 @@ class QrMode:
     def wants_camera(self) -> bool:
         return False
 
+    def wants_release(self) -> bool:
+        return False
+
     def enter(self, payload: dict) -> None:
         self._value = str(payload.get("value", ""))
         self._caption = str(payload.get("title") or DEFAULT_CAPTION)

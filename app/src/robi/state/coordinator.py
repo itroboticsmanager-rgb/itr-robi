@@ -51,18 +51,23 @@ class Coordinator:
     """Тримає активний режим і вирішує, хто кого витісняє."""
 
     #: Режими, які ще не реалізовані. Команду на них треба чесно відхилити,
-    #: а не мовчки проковтнути.
+    #: а не мовчки проковтнути. Перелік задається при створенні, бо
+    #: реалізованість не є властивістю коду: `info` існує лише тоді, коли
+    #: пристрою даний контент (D-048), і без нього команду на нього слід
+    #: відхиляти так само чесно, як і на нереалізований `voice`.
     UNSUPPORTED = frozenset({ModeName.INFO, ModeName.NFC, ModeName.VOICE})
 
     def __init__(
         self,
         base: ModeName = ModeName.MASCOT,
         clock: Callable[[], float] = now,
+        unsupported: frozenset[ModeName] | None = None,
     ) -> None:
         # Годинник інжектується, бо вся ця логіка — про час: TTL, expiry
         # й витіснення неможливо перевірити на реальному монотонному часі.
         self._clock = clock
         self._base = base
+        self.unsupported = self.UNSUPPORTED if unsupported is None else unsupported
         self._active = Activation(base, Priority.BACKGROUND, clock())
         self._seen_commands: dict[str, CommandResult] = {}
 
@@ -142,7 +147,7 @@ class Coordinator:
                 mode = ModeName(raw)
             except ValueError:
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unknown_mode")
-            if mode in self.UNSUPPORTED:
+            if mode in self.unsupported:
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unsupported_mode")
             ttl = _ttl_from(cmd, at)
             ok = self.request(mode, Priority.CRM, ttl, cmd.command_id, at, cmd.payload)

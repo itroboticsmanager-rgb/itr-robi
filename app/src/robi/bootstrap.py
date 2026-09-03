@@ -10,15 +10,18 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 
 import pygame
 
 from .config import Config
+from .content import Content, ContentError
 from .events import Command, CommandKind, CommandResult, CommandStatus, Event, Source, Touch, now
 from .hardware.fake import FakeNfc, FakeOutputs, FakeToF
 from .health.metrics import FrameStats, Metrics
 from .integration.crm import CrmClient
 from .integration.policy import UrlPolicy
+from .modes.info import InfoMode
 from .modes.mascot import MascotMode
 from .modes.qr import QrMode
 from .state.coordinator import Coordinator, ModeName, Priority
@@ -63,7 +66,15 @@ class App:
         self.clock = pygame.time.Clock()
 
         self.machine = StateMachine()
-        self.coordinator = Coordinator(ModeName.MASCOT, clock=self.clock_fn)
+        # Контент необов'язковий: без нього меню просто немає, а команда на
+        # `info` відхиляється як непідтримана (D-048).
+        self.content = self._load_content(config)
+        unsupported = set(Coordinator.UNSUPPORTED)
+        if self.content is not None:
+            unsupported.discard(ModeName.INFO)
+        self.coordinator = Coordinator(
+            ModeName.MASCOT, clock=self.clock_fn, unsupported=frozenset(unsupported)
+        )
         self.metrics = Metrics()
         self.overlay = Overlay(size)
         self.policy = UrlPolicy(config.crm.allowed_url_schemes, config.crm.allowed_domains)
@@ -92,6 +103,9 @@ class App:
             ModeName.MASCOT: MascotMode(size),
             ModeName.QR: QrMode(size),
         }
+        if self.content is not None:
+            assets = Path(config.content.assets) if config.content.assets else None
+            self.modes[ModeName.INFO] = InfoMode(size, self.content, assets)
         self._current = ModeName.MASCOT
 
         self.crm: CrmClient | None = None
@@ -106,6 +120,22 @@ class App:
         self._intent_ttl = 0.0
         self._running = False
         self._camera_check_acc = 0.0
+
+    @staticmethod
+    def _load_content(config: Config) -> Content | None:
+        """Битий контент не має валити пристрій — він має вимикати меню.
+
+        Маскот на стійці цінніший за меню: якщо в контенті помилка, ROBI
+        далі вітає людей і показує QR, а адміністратор бачить причину в
+        health, а не чорний екран.
+        """
+        if not config.content.path:
+            return None
+        try:
+            return Content.load(config.content.path)
+        except ContentError as exc:
+            print(f"[content] меню вимкнено: {exc}")
+            return None
 
     # -- запуск і зупинка --------------------------------------------------
 
@@ -182,6 +212,8 @@ class App:
         if self.vision.capturing:
             events.extend(self.vision.poll(sim_dt))
 
+        events = self._route_touches(events)
+
         self._pump_crm()
         changed = self.coordinator.tick()
         if changed or self.coordinator.mode is not self._current:
@@ -192,6 +224,9 @@ class App:
             mode.handle(event)
 
         intent = mode.update(sim_dt)
+        if mode.wants_release():
+            # Режим лише повідомляє, що закінчив; звільняє екран координатор.
+            self.coordinator.release()
         self._apply_intent(intent, sim_dt)
         self._sync_state()
 
@@ -206,6 +241,30 @@ class App:
         )
         pygame.display.flip()
         self.metrics.frame(dt)
+
+    def _route_touches(self, events: list[Event]) -> list[Event]:
+        """Дотик відкриває меню й тримає його відкритим (D-048).
+
+        Пріоритет `USER` захоплює саме той режим, який дотик відкриває —
+        як і передбачав коментар у `_pump_window`. Кожен наступний дотик
+        оновлює TTL, тож меню не зникає під пальцем; коли людина пішла,
+        активація спливає сама й координатор повертає `mascot`.
+        """
+        if ModeName.INFO not in self.modes:
+            return events
+        if not any(isinstance(e, Touch) for e in events):
+            return events
+
+        ttl = self.config.content.timeout_s
+        if self._current is ModeName.MASCOT:
+            if self.coordinator.user_interaction(ModeName.INFO, ttl):
+                # Дотик, що відкрив меню, не має ще й натиснути пункт у
+                # ньому: координати були з екрана маскота, і будь-яке
+                # влучання тут було б випадковим.
+                return [e for e in events if not isinstance(e, Touch)]
+        elif self._current is ModeName.INFO:
+            self.coordinator.user_interaction(ModeName.INFO, ttl)
+        return events
 
     def _pump_window(self) -> list[Event]:
         out: list[Event] = []
@@ -224,16 +283,11 @@ class App:
                 out.append(
                     Touch(Source.TOUCH, x=event.pos[0] / w, y=event.pos[1] / h)
                 )
-                # USER-пріоритет тут НЕ захоплюється навмисно. Дотик у режимі
-                # mascot нічого не відкриває: обличчя лише реагує підсвіткою.
-                # Якби кожен дотик claim'ив пріоритет, випадковий доторк до
-                # екрана на рецепції глушив би CRM на десятки секунд — і
-                # зовні це виглядало б як «ROBI перестав показувати QR» без
-                # жодної видимої причини.
-                #
-                # Пріоритет має захоплювати той режим, який дотик справді
-                # відкриває. Це стане актуальним разом з `info` і `nfc`;
-                # `Coordinator.user_interaction` уже готовий і покритий тестами.
+                # Пріоритет захоплює не сам дотик, а режим, який він
+                # відкриває — див. `_route_touches`. Якби кожен доторк
+                # claim'ив USER, випадкове торкання екрана на рецепції
+                # глушило б CRM на десятки секунд, і зовні це виглядало б
+                # як «ROBI перестав показувати QR» без видимої причини.
         return out
 
     def accept_command(self, cmd: Command) -> CommandResult:
