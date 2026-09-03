@@ -13,6 +13,7 @@ import pygame
 from ..events import Event, FaceSeen, Intent, NfcTouched, Presence, Touch
 from ..state.coordinator import ModeName
 from ..ui.face import FaceRenderer
+from ..mascot_state import MascotState, parse as parse_state
 from ..ui.theme import PALETTE
 
 #: Скільки секунд без детекції обличчя треба, щоб ROBI повернув погляд
@@ -44,6 +45,18 @@ class MascotMode:
     def wants_release(self) -> bool:
         return False
 
+    def set_state_from(self, value: str) -> bool:
+        """Стан із команди CRM. Невідомий ключ ігнорується, а не валить режим.
+
+        Словник спільний із CRM (`mascot_state`), тож команда може
+        називати емоцію тим самим словом, яким її називає портал.
+        """
+        state = parse_state(value)
+        if state is None:
+            return False
+        self.face.set_state(state)
+        return True
+
     def enter(self, payload: dict) -> None:
         self._since_face = 999.0
 
@@ -61,6 +74,7 @@ class MascotMode:
                 self.face.look_at(event.x, event.y)
                 if was_away:
                     self.face.react_greeting()
+                    self.face.set_state(MascotState.HAPPY)
             return
 
         if isinstance(event, Presence):
@@ -68,19 +82,23 @@ class MascotMode:
             self._present = event.present
             if event.present and not was:
                 self.face.react_greeting()
+                self.face.set_state(MascotState.HAPPY)
                 self._request_accent(PALETTE.accent)
             return
 
         if isinstance(event, Touch):
             self.face.react_touch(event.x, event.y)
+            self.face.set_state(MascotState.HAPPY)
             self._request_accent(PALETTE.ok)
             return
 
         if isinstance(event, NfcTouched):
             if event.ok:
                 self.face.react_success()
+                self.face.set_state(MascotState.SUCCESS)
             else:
                 self.face.react_error()
+                self.face.set_state(MascotState.ERROR)
             self._request_accent(PALETTE.ok if event.ok else PALETTE.error)
 
     def _request_accent(self, rgb: tuple[int, int, int]) -> None:

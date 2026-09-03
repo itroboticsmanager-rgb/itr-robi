@@ -1,9 +1,17 @@
 """Живе процедурне обличчя ROBI.
 
-Візуальна мова повторює 3D-маскота: світло-блакитна лицьова панель,
-великі глянцеві очі та маленька м'яка усмішка. Усі дорогі поверхні
-готуються під час ``resize``. У кадрі лишаються blit-и, кілька простих
-обчислень і плавне стеження за ціллю.
+Візуальна мова повторює маскота бренду: світло-блакитна лицьова панель і
+великі глянцеві очі. **Рота немає** — його немає й у персонажа: ні в
+переліку частин візуального гайда CRM, ні на 3D-референсах. Гайд прямо
+називає очі «основним емоційним елементом», і на пристрої вони лишаються
+єдиним, бо кінцівки статичні (`D-019`), антена без світлодіода (`D-045`),
+а канал RGB знято (`D-043`).
+
+Емоції задаються станами зі спільного словника (`mascot_state`), ключі
+якого дослівно збігаються з гайдом CRM.
+
+Усі дорогі поверхні готуються під час ``resize``. У кадрі лишаються
+blit-и, кілька простих обчислень і плавне стеження за ціллю.
 """
 
 from __future__ import annotations
@@ -13,10 +21,18 @@ import random
 
 import pygame
 
+from ..mascot_state import (
+    EYE_CLOSED,
+    EYE_CRESCENT,
+    EYE_NARROW,
+    EYE_OPEN,
+    EYE_WIDE,
+    MascotState,
+    look_for,
+)
 from .theme import GEOMETRY, PALETTE, SUPERSAMPLE, Color
 
 BLINK_STEPS = 10
-MOUTH_STEPS = 8
 
 
 def _ellipse(size: tuple[int, int], color: tuple[int, ...]) -> pygame.Surface:
@@ -27,8 +43,13 @@ def _ellipse(size: tuple[int, int], color: tuple[int, ...]) -> pygame.Surface:
     return pygame.transform.smoothscale(big, (width, height))
 
 
-def _smile(width: int, height: int, thickness: int, color: Color, depth: float) -> pygame.Surface:
-    """Маленька U-подібна усмішка з круглими кінцями."""
+def _arc(width: int, height: int, thickness: int, color: Color, depth: float) -> pygame.Surface:
+    """Дуга з круглими кінцями — щасливе око-півмісяць.
+
+    Цією ж кривою раніше малювався рот. Рот прибрано як не належний
+    персонажу, а крива лишилася: у гайді бренду `happy` і `success` — це
+    саме очі-півмісяці.
+    """
     pad = thickness
     big_w = (width + pad * 2) * SUPERSAMPLE
     big_h = (height + pad * 2) * SUPERSAMPLE
@@ -125,6 +146,8 @@ class FaceRenderer:
         self._saccade_t = 0.0
         self._clock = 0.0
 
+        self._state = MascotState.IDLE
+        self._state_left: float | None = None
         self._reaction_kind = "idle"
         self._reaction_left = 0.0
         self._reaction_duration = 0.0
@@ -151,29 +174,38 @@ class FaceRenderer:
         self._eye_frames = self._make_blink_frames()
         self._pupil = _pupil((self._pupil_w, self._pupil_h))
 
-        mouth_w = max(28, int(g.mouth_width * w))
-        mouth_h = max(16, int(g.mouth_height * h))
-        mouth_t = max(4, int(g.mouth_thickness * w))
-        self._mouth_frames = [
-            _smile(
-                int(mouth_w * (1.0 + 0.22 * i / (MOUTH_STEPS - 1))),
-                int(mouth_h * (1.0 + 0.18 * i / (MOUTH_STEPS - 1))),
-                mouth_t,
-                PALETTE.mouth,
-                i / (MOUTH_STEPS - 1),
-            )
-            for i in range(MOUTH_STEPS)
-        ]
-        self._oops_mouth = _ellipse(
-            (max(mouth_t * 3, int(mouth_w * 0.30)), max(mouth_t * 4, int(mouth_h * 0.72))),
-            PALETTE.mouth,
-        )
-        self._mouth_y = int(g.mouth_y * h)
+        self._eye_variants = self._make_eye_variants()
 
-        cheek_w = max(16, int(w * 0.075))
-        cheek_h = max(8, int(h * 0.027))
-        self._cheek = _ellipse((cheek_w, cheek_h), (*PALETTE.face_glow, 108))
         self._star = _star(max(12, int(h * 0.036)))
+        self._zzz_font = None
+
+    def _make_eye_variants(self) -> dict[str, tuple[pygame.Surface, int]]:
+        """Форми ока під стани бренду, готуються один раз на розмір.
+
+        Значення — поверхня й ефективна висота: за нею вирішується, чи
+        лишається місце для зіниці. У півмісяця її немає — це вже не
+        око з зіницею, а вигин.
+        """
+        base, base_h = self._eye_frames[0]
+        wide = pygame.transform.smoothscale(
+            base, (int(base.get_width() * 1.16), int(base.get_height() * 1.16))
+        )
+        narrow = pygame.transform.smoothscale(
+            base, (base.get_width(), max(4, int(base.get_height() * 0.52)))
+        )
+        crescent = _arc(
+            self._eye_w,
+            max(6, int(self._eye_h * 0.42)),
+            max(4, int(self._eye_w * 0.16)),
+            PALETTE.eye_white,
+            0.0,
+        )
+        return {
+            EYE_WIDE: (wide, int(base_h * 1.16)),
+            EYE_NARROW: (narrow, max(2, int(base_h * 0.52))),
+            EYE_CRESCENT: (crescent, 0),
+            EYE_CLOSED: self._eye_frames[BLINK_STEPS - 1],
+        }
 
     def _make_background(self, size: tuple[int, int]) -> pygame.Surface:
         """Двовимірне світло й віньєтка додають панелі м'якого об'єму."""
@@ -227,15 +259,15 @@ class FaceRenderer:
                 y = center_y
                 pygame.draw.line(
                     frame,
-                    PALETTE.mouth,
+                    PALETTE.eye_line,
                     (pad + thickness, y),
                     (pad + self._eye_w - thickness, y),
                     thickness,
                 )
-                pygame.draw.circle(frame, PALETTE.mouth, (pad + thickness, y), thickness // 2)
+                pygame.draw.circle(frame, PALETTE.eye_line, (pad + thickness, y), thickness // 2)
                 pygame.draw.circle(
                     frame,
-                    PALETTE.mouth,
+                    PALETTE.eye_line,
                     (pad + self._eye_w - thickness, y),
                     thickness // 2,
                 )
@@ -263,6 +295,18 @@ class FaceRenderer:
         """Людина зникла, ROBI спокійно повертається у нейтраль."""
         self._gaze_target = (0.0, 0.0)
         self._has_face = False
+
+    # -- стани бренду ---------------------------------------------------
+
+    def set_state(self, state: MascotState) -> None:
+        """Виставити стан зі спільного словника (`mascot_state`)."""
+        look = look_for(state)
+        self._state = state
+        self._state_left = look.hold_s
+
+    @property
+    def state(self) -> MascotState:
+        return self._state
 
     def react_greeting(self) -> None:
         self._start_reaction("greeting", duration=1.35, strength=0.72)
@@ -304,6 +348,15 @@ class FaceRenderer:
     def update(self, dt: float) -> None:
         self._clock += dt
         self._reaction_left = max(0.0, self._reaction_left - dt)
+
+        # Тимчасові стани самі повертаються в idle; стани без hold_s
+        # лишаються, поки їх не змінять — «помилка», яка зникла сама,
+        # людину біля стійки лише спантеличить.
+        if self._state_left is not None:
+            self._state_left -= dt
+            if self._state_left <= 0.0:
+                self._state = MascotState.IDLE
+                self._state_left = None
         self._gesture_t = max(0.0, self._gesture_t - dt)
 
         target = self._gesture_target if self._gesture_t > 0.0 else self._gaze_target
@@ -340,6 +393,13 @@ class FaceRenderer:
         tx, ty = self._saccade_target
         self._saccade = (sx + (tx - sx) * idle_k, sy + (ty - sy) * idle_k)
 
+    def _current_eye(self) -> tuple[pygame.Surface, int]:
+        """Форма ока за станом. Кліпає лише відкрите — інші форми статичні."""
+        look = look_for(self._state)
+        if look.eye == EYE_OPEN:
+            return self._blink_frame()
+        return self._eye_variants[look.eye]
+
     def _blink_frame(self) -> tuple[pygame.Surface, int]:
         if self._blink_progress <= 0.0:
             return self._eye_frames[0]
@@ -356,11 +416,18 @@ class FaceRenderer:
         reaction = self._reaction_amount()
         lift = -reaction * h * 0.010
         cy = self._eye_y + self._breath * h + lift
-        eye, eye_h = self._blink_frame()
-        canvas_w, canvas_h = self._eye_canvas_size
+        look = look_for(self._state)
+        eye, eye_h = self._current_eye()
+        canvas_w, canvas_h = eye.get_width(), eye.get_height()
 
         gx, gy = self._gaze
         sx, sy = self._saccade
+        # Стан може вести погляд сам: «дивляться вгору» в thinking,
+        # «вбік» у empty. Стеження за людиною лишається тільки в idle,
+        # інакше емоція боролася б із камерою за напрямок очей.
+        if not look.follows_face:
+            gx, gy = look.gaze
+            sx = sy = 0.0
         for sign in (-1, 1):
             cx = w / 2.0 + sign * self._eye_dx
             target.blit(eye, (int(cx - canvas_w / 2), int(cy - canvas_h / 2)))
@@ -385,31 +452,44 @@ class FaceRenderer:
         self._draw_expression(target, reaction, lift)
 
     def _draw_expression(self, target: pygame.Surface, reaction: float, lift: float) -> None:
+        """Понад очима лишилися тільки іскри й «Zzz».
+
+        Рум'янець прив'язувався до положення рота, якого більше немає, і
+        разом із ним пішов: у гайді бренду його теж немає.
+        """
         w, h = self.size
+        look = look_for(self._state)
 
-        if self._reaction_kind == "oops" and reaction > 0.08:
-            mouth = self._oops_mouth
-        else:
-            frame = min(MOUTH_STEPS - 1, int(reaction * (MOUTH_STEPS - 1)))
-            mouth = self._mouth_frames[frame]
+        if look.zzz:
+            self._draw_zzz(target, lift)
 
-        mouth_x = w // 2 - mouth.get_width() // 2
-        mouth_y = int(self._mouth_y + self._breath * h + lift - mouth.get_height() * 0.12)
-        target.blit(mouth, (mouth_x, mouth_y))
-
-        if self._reaction_kind not in {"greeting", "happy", "success"} or reaction <= 0.03:
+        # Іскри світяться і від стану (happy/success/achievement), і від
+        # короткої реакції на дотик — беремо сильніше з двох.
+        amount = max(reaction, 0.85 if look.sparkle else 0.0)
+        if amount <= 0.03:
             return
 
-        cheek_alpha = int(48 + reaction * 96)
-        self._cheek.set_alpha(min(180, cheek_alpha))
-        cheek_y = int(self._mouth_y - self._cheek.get_height() * 0.1 + lift)
-        for x in (int(w * 0.30), int(w * 0.70 - self._cheek.get_width())):
-            target.blit(self._cheek, (x, cheek_y))
-
-        self._star.set_alpha(min(230, int(reaction * 230)))
-        star_positions = (
+        self._star.set_alpha(min(230, int(amount * 230)))
+        for x, y in (
             (int(w * 0.225), int(h * 0.255 + lift)),
             (int(w * 0.755), int(h * 0.315 + lift)),
-        )
-        for x, y in star_positions:
+        ):
             target.blit(self._star, (x, y))
+
+    def _draw_zzz(self, target: pygame.Surface, lift: float) -> None:
+        """Сон у гайді показується літерами, а не заплющеними очима."""
+        w, h = self.size
+        if self._zzz_font is None:
+            self._zzz_font = pygame.font.Font(None, max(20, int(h * 0.085)))
+        for i in range(3):
+            phase = (self._clock * 0.55 + i * 0.33) % 1.0
+            alpha = int(200 * math.sin(phase * math.pi))
+            glyph = self._zzz_font.render("z", True, PALETTE.eye_line)
+            glyph.set_alpha(max(0, alpha))
+            scale = 0.7 + 0.5 * phase
+            glyph = pygame.transform.smoothscale(
+                glyph, (max(1, int(glyph.get_width() * scale)), max(1, int(glyph.get_height() * scale)))
+            )
+            x = int(w * 0.62 + i * w * 0.035)
+            y = int(self._eye_y - h * 0.10 - phase * h * 0.09 + lift)
+            target.blit(glyph, (x, y))

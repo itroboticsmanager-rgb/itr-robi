@@ -1,6 +1,9 @@
 """Палітра й геометрія обличчя ROBI.
 
-Ролі кольорів зібрані з актуальних 3D-референсів маскота. Вони вибрані
+Ролі кольорів зібрані з 3D-референсів маскота й звірені з візуальним
+гайдом бренду в CRM (`docs/mascot/mascot-visual-guide.md`): той самий
+персонаж живе в CRM, порталах і на цьому пристрої. Екран планшета — це
+**лицьова панель** маскота, світліша за корпус, а не сам корпус. Вони вибрані
 в OKLCH, а тут зберігаються як RGB, бо саме цей формат приймає pygame.
 Геометрія задана у частках екрана й оптимізована для Surface Go 2 у 3:2,
 але лишається адаптивною для вікон розробника.
@@ -18,7 +21,8 @@ class Palette:
     # Блакитна лицьова панель, а не колір зовнішнього корпуса.
     face_top: Color = (121, 190, 251)
     face_bottom: Color = (77, 155, 239)
-    face_edge: Color = (50, 126, 224)
+    # Край панелі зведено з кольором корпуса з гайда (#2563eb).
+    face_edge: Color = (37, 99, 235)
     face_glow: Color = (177, 220, 255)
 
     eye_white: Color = (248, 252, 255)
@@ -26,7 +30,9 @@ class Palette:
     pupil: Color = (13, 29, 62)
     pupil_soft: Color = (27, 58, 111)
     highlight: Color = (244, 250, 255)
-    mouth: Color = (18, 55, 126)
+    #: Лінія заплющеного ока. Раніше цим кольором малювався рот, якого в
+    #: персонажа немає — див. docstring `ui/face.py`.
+    eye_line: Color = (18, 55, 126)
 
     accent: Color = (150, 207, 255)
     error: Color = (224, 83, 76)
@@ -52,10 +58,6 @@ class Geometry:
     pupil_radius: float = 0.044
     pupil_aspect: float = 1.08
     pupil_travel: float = 0.024
-    mouth_y: float = 0.665
-    mouth_width: float = 0.105
-    mouth_height: float = 0.050
-    mouth_thickness: float = 0.009
 
 
 PALETTE = Palette()
