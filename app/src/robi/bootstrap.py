@@ -40,6 +40,35 @@ from .vision.fake import FakeVision
 MAX_STEP_S = 0.1
 
 
+def _claim_dpi_awareness() -> None:
+    """Сказати Windows, що застосунок рахує пікселі сам.
+
+    Без цього процес вважається DPI-необізнаним, і система бреше про
+    розмір екрана: на Surface Go 2 з його 1920x1280 `pygame` отримував
+    1024x768. Далі Windows малює вікно в цих вигаданих координатах і
+    розтягує результат — краї обрізаються, а текст стає нечітким.
+
+    Помітити це на ноутбуці зі стандартним масштабом неможливо: там
+    брехні немає. Тому виклик стоїть тут, до `pygame.init()`, а не в
+    налаштуваннях пристрою — це властивість застосунку, а не машини.
+    """
+    if os.name != "nt":
+        return
+    import ctypes
+
+    try:
+        # PROCESS_PER_MONITOR_DPI_AWARE: правильна поведінка при переносі
+        # між екранами з різним масштабом.
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except (AttributeError, OSError):
+            # Старий Windows або нестандартна збірка: краще нечіткий
+            # рендер, ніж застосунок, який не стартує.
+            pass
+
+
 class App:
     def __init__(
         self,
@@ -57,6 +86,7 @@ class App:
             os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
             os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
+        _claim_dpi_awareness()
         pygame.init()
         pygame.display.set_caption("ROBI")
 
