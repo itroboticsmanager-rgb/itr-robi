@@ -16,7 +16,17 @@ import pygame
 
 from .config import Config
 from .content import Content, ContentError
-from .events import Command, CommandKind, CommandResult, CommandStatus, Event, Source, Touch, now
+from .events import (
+    Command,
+    CommandKind,
+    CommandResult,
+    CommandStatus,
+    Event,
+    Source,
+    Swipe,
+    Touch,
+    now,
+)
 from .hardware.fake import FakeNfc, FakeOutputs, FakeToF
 from .health.metrics import FrameStats, Metrics
 from .integration.crm import CrmClient
@@ -38,6 +48,14 @@ from .vision.fake import FakeVision
 #: У метриках лишається справжній час кадру: приховувати затримку не можна,
 #: її треба бачити.
 MAX_STEP_S = 0.1
+
+#: Наскільки далеко може поїхати палець, і рух ще рахується натисканням.
+TAP_SLOP = 0.03
+
+#: Наскільки довгим має бути протягування, щоб вважатися свайпом. Частка
+#: висоти екрана: на 1280 px це приблизно 150 px — достатньо, щоб не
+#: спрацьовувати від тремтіння руки, і мало, щоб жест був невимушеним.
+SWIPE_MIN = 0.12
 
 
 def _claim_dpi_awareness() -> None:
@@ -153,7 +171,7 @@ class App:
 
         self._intent_ttl = 0.0
         self._running = False
-        self._camera_check_acc = 0.0
+        self._press: tuple[float, float] | None = None
 
     @staticmethod
     def _load_content(config: Config) -> Content | None:
@@ -231,14 +249,6 @@ class App:
         # dt, тож реальна затримка коректно погасить прострочений сценарій.
         sim_dt = min(dt, MAX_STEP_S)
 
-        # Розклад камери перевіряється раз на секунду, а не раз на кадр:
-        # інакше зміна режиму була б єдиним моментом, коли ROBI помічає,
-        # що тихі години настали.
-        self._camera_check_acc += dt
-        if self._camera_check_acc >= 1.0:
-            self._camera_check_acc = 0.0
-            self._sync_camera()
-
         events: list[Event] = []
         events.extend(self._pump_window())
         events.extend(self.tof.poll(sim_dt))
@@ -256,6 +266,13 @@ class App:
         mode = self.modes[self._current]
         for event in events:
             mode.handle(event)
+
+        # Камера узгоджується щокадру, після подій. Раніше тут стояла
+        # перевірка раз на секунду заради економії, але вона коштувала
+        # чутливості: людина тягне ROBI вниз, а погляд оживає із затримкою.
+        # Ціна щокадрової перевірки — кілька порівнянь при бюджеті 16.7 мс,
+        # з яких рендер займає 2.4.
+        self._sync_camera()
 
         intent = mode.update(sim_dt)
         if mode.wants_release():
@@ -314,14 +331,32 @@ class App:
                     self.nfc.simulate_touch()
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 w, h = self.screen.get_size()
-                out.append(
-                    Touch(Source.TOUCH, x=event.pos[0] / w, y=event.pos[1] / h)
-                )
-                # Пріоритет захоплює не сам дотик, а режим, який він
-                # відкриває — див. `_route_touches`. Якби кожен доторк
-                # claim'ив USER, випадкове торкання екрана на рецепції
-                # глушило б CRM на десятки секунд, і зовні це виглядало б
-                # як «ROBI перестав показувати QR» без видимої причини.
+                self._press = (event.pos[0] / w, event.pos[1] / h)
+            elif event.type == pygame.MOUSEBUTTONUP and self._press is not None:
+                w, h = self.screen.get_size()
+                start, self._press = self._press, None
+                end = (event.pos[0] / w, event.pos[1] / h)
+                dx, dy = end[0] - start[0], end[1] - start[1]
+
+                # Намір визначається при відпусканні, а не при натисканні.
+                # Інакше протягування пальцем спершу відкривало б меню, а
+                # вже потім виявлялося свайпом — людина бачила б спалах
+                # чужого екрана посеред власного жесту.
+                if abs(dy) >= SWIPE_MIN and abs(dy) > abs(dx):
+                    out.append(Swipe(
+                        Source.TOUCH,
+                        direction="down" if dy > 0 else "up",
+                        x=start[0], y=start[1], distance=abs(dy),
+                    ))
+                elif abs(dx) < TAP_SLOP and abs(dy) < TAP_SLOP:
+                    # Пріоритет захоплює не сам дотик, а режим, який він
+                    # відкриває — див. `_route_touches`. Якби кожен доторк
+                    # claim'ив USER, випадкове торкання екрана на рецепції
+                    # глушило б CRM на десятки секунд, і зовні це виглядало б
+                    # як «ROBI перестав показувати QR» без видимої причини.
+                    out.append(Touch(Source.TOUCH, x=end[0], y=end[1]))
+                # Проміжне — не дотик і не свайп: змазаний рух, і вгадувати
+                # намір за нього не варто.
         return out
 
     def accept_command(self, cmd: Command) -> CommandResult:

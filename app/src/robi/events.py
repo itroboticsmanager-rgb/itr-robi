@@ -53,6 +53,21 @@ class Touch(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class Swipe(Event):
+    """Протягування пальцем. Координати нормалізовані, як у `Touch`.
+
+    Окремо від `Touch` навмисно: протягування — це намір, відмінний від
+    натискання, і плутати їх означало б відкривати меню щоразу, коли
+    людина тягне екран.
+    """
+
+    direction: str = "down"
+    x: float = 0.0
+    y: float = 0.0
+    distance: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
 class Presence(Event):
     """ToF: є людина поруч чи ні."""
 

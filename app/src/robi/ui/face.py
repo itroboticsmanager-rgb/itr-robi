@@ -148,6 +148,9 @@ class FaceRenderer:
 
         self._state = MascotState.IDLE
         self._state_left: float | None = None
+        #: Підказка про жест. Ховається, щойно ROBI розгорнули: далі вона
+        #: вже нічого не пояснює, а лише займає місце на обличчі.
+        self.show_handle = True
         self._reaction_kind = "idle"
         self._reaction_left = 0.0
         self._reaction_duration = 0.0
@@ -412,6 +415,8 @@ class FaceRenderer:
     def draw(self, target: pygame.Surface) -> None:
         w, h = self.size
         target.blit(self._background, (0, 0))
+        if self.show_handle:
+            self._draw_handle(target)
 
         reaction = self._reaction_amount()
         lift = -reaction * h * 0.010
@@ -450,6 +455,26 @@ class FaceRenderer:
                 target.set_clip(None)
 
         self._draw_expression(target, reaction, lift)
+
+    def _draw_handle(self, target: pygame.Surface) -> None:
+        """Коротка смужка вгорі: «мене можна потягнути».
+
+        Свідомо непомітна. Це та сама ручка, що в шторок на телефоні:
+        хто знає жест — упізнає її боковим зором, хто не знає — не
+        відволікається. Тому ні анімації, ні пульсації, ні підпису: на
+        вітрині біля стійки миготливий елемент перетягує на себе увагу,
+        яка мала б дістатися дитині поруч.
+        """
+        w, h = self.size
+        width = max(24, int(w * 0.055))
+        height = max(3, int(h * 0.006))
+        x = w // 2 - width // 2
+        y = max(height, int(h * 0.022))
+        bar = pygame.Surface((width, height), pygame.SRCALPHA)
+        pygame.draw.rect(
+            bar, (*PALETTE.face_glow, 120), bar.get_rect(), border_radius=height // 2
+        )
+        target.blit(bar, (x, y))
 
     def _draw_expression(self, target: pygame.Surface, reaction: float, lift: float) -> None:
         """Понад очима лишилися тільки іскри й «Zzz».

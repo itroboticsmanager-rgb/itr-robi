@@ -52,14 +52,39 @@ def test_boots_to_ready(app):
     assert app.machine.state is SystemState.READY
 
 
-def test_camera_starts_in_mascot(app):
-    """mascot — єдиний режим, що вмикає захоплення (D-033)."""
+def test_camera_is_off_while_robi_just_stands_there(app):
+    """Спокій без камери — головна зміна поведінки пристрою.
+
+    Раніше `mascot` тримав захоплення ввімкненим завжди, тобто ROBI
+    дивився в порожній хол цілодобово. Тепер камера чекає, поки людина
+    сама відкриє інтерактивний режим.
+    """
     assert app.coordinator.mode is ModeName.MASCOT
+    assert not app.vision.capturing
+
+
+def test_camera_starts_only_when_robi_is_pulled_open(app):
+    """І гасне, коли режим згортається."""
+    mode = app.modes[ModeName.MASCOT]
+    mode.expand()
+    app.step(0.016)
     assert app.vision.capturing
 
+    mode.collapse()
+    app.step(0.016)
+    assert not app.vision.capturing
 
-def test_camera_stops_in_qr_and_resumes_after(app, clock):
-    """Під час показу QR пристрою нема на що дивитися — захоплення гасне."""
+
+def test_qr_interrupts_the_interactive_mode(app, clock):
+    """Під час показу QR пристрою нема на що дивитися — захоплення гасне.
+
+    А повернення в `mascot` не відновлює інтерактив: наступна людина не
+    має заставати камеру ввімкненою від попередньої.
+    """
+    app.modes[ModeName.MASCOT].expand()
+    app.step(0.016)
+    assert app.vision.capturing
+
     app.coordinator.apply(
         Command(CommandKind.SHOW_QR, "c1", {"value": "https://example.org/x", "duration_ms": 500})
     )
@@ -70,7 +95,7 @@ def test_camera_stops_in_qr_and_resumes_after(app, clock):
     clock.advance(1.0)
     app.step(0.016)
     assert app.coordinator.mode is ModeName.MASCOT
-    assert app.vision.capturing
+    assert not app.vision.capturing
 
 
 def test_camera_disabled_by_feature_flag():
@@ -184,11 +209,18 @@ def test_bare_tap_does_not_preempt_crm(app):
 
 
 def test_tap_still_reaches_the_mode(app):
-    """Дотик не зникає: обличчя реагує на нього підсвіткою."""
+    """Дотик не зникає: обличчя реагує на нього підсвіткою.
+
+    Намір визначається при **відпусканні**: натискання саме по собі ще не
+    дотик, бо з нього може вирости свайп.
+    """
     import pygame
 
     pygame.event.post(
         pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": (10, 10), "button": 1})
+    )
+    pygame.event.post(
+        pygame.event.Event(pygame.MOUSEBUTTONUP, {"pos": (10, 10), "button": 1})
     )
     app.step(0.016)
     assert app.outputs.rgb is not None

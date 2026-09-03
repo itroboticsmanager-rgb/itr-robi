@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pygame
 
-from ..events import Event, FaceSeen, Intent, NfcTouched, Presence, Touch
+from ..events import Event, FaceSeen, Intent, NfcTouched, Presence, Swipe, Touch
 from ..state.coordinator import ModeName
 from ..ui.face import FaceRenderer
 from ..mascot_state import MascotState, parse as parse_state
@@ -28,6 +28,14 @@ FACE_LOST_GRACE_S = 1.5
 #: безперервно при кожному русі перед столом.
 ACCENT_COOLDOWN_S = 6.0
 
+#: Скільки інтерактивний режим тримається без дотиків.
+#:
+#: Відлік скидає саме дотик, а не побачене обличчя. Інакше вийшло б
+#: замкнене коло: камера лишалася б увімкненою тому, що бачить людину,
+#: яка нічого не робить, — а це рівно те постійне спостереження, від
+#: якого цей режим і рятує.
+INTERACTIVE_TIMEOUT_S = 120.0
+
 
 class MascotMode:
     name = ModeName.MASCOT
@@ -38,9 +46,21 @@ class MascotMode:
         self._present = False
         self._accent_cooldown = 0.0
         self._pending_accent: tuple[int, int, int] | None = None
+        self._interactive = False
+        self._idle_since = 0.0
 
     def wants_camera(self) -> bool:
-        return True
+        """Камера працює лише в інтерактивному режимі.
+
+        Це головна зміна в поведінці пристрою: замість того, щоб дивитися
+        в порожній хол цілодобово й сповільнюватися за розкладом, ROBI
+        вмикає камеру тоді, коли людина сама потягнула його вниз.
+
+        Крім тепла й струму це змінює й розмову з батьками: не «камера
+        працює завжди, але нічого не зберігає», а «камера вмикається,
+        коли ви самі відкриваєте режим гри».
+        """
+        return self._interactive
 
     def wants_release(self) -> bool:
         return False
@@ -58,6 +78,10 @@ class MascotMode:
         return True
 
     def enter(self, payload: dict) -> None:
+        # Повернення в mascot завжди починається зі спокою: наступна
+        # людина не має заставати камеру ввімкненою від попередньої.
+        self._interactive = False
+        self._idle_since = 0.0
         self._since_face = 999.0
 
     def exit(self) -> None:
@@ -66,7 +90,37 @@ class MascotMode:
     def resize(self, size: tuple[int, int]) -> None:
         self.face.resize(size)
 
+    # -- інтерактивний режим ------------------------------------------
+
+    @property
+    def interactive(self) -> bool:
+        return self._interactive
+
+    def expand(self) -> None:
+        """Людина потягнула ROBI вниз: вмикаємо камеру й погляд."""
+        self._interactive = True
+        self._idle_since = 0.0
+        self.face.show_handle = False
+        self.face.set_state(MascotState.HAPPY)
+
+    def collapse(self) -> None:
+        """Повернення в спокій. Камера гасне разом зі станом (D-029)."""
+        self._interactive = False
+        self._idle_since = 0.0
+        self.face.show_handle = True
+        self.face.look_away()
+        self.face.set_state(MascotState.IDLE)
+
     def handle(self, event: Event) -> None:
+        if isinstance(event, Swipe):
+            # Тягнути вниз — розгорнути. Вгору — згорнути назад, щоб вихід
+            # був таким самим жестом, а не лише очікуванням таймера.
+            if event.direction == "down" and not self._interactive:
+                self.expand()
+            elif event.direction == "up" and self._interactive:
+                self.collapse()
+            return
+
         if isinstance(event, FaceSeen):
             if event.count > 0:
                 was_away = self._since_face > FACE_LOST_GRACE_S
@@ -87,6 +141,8 @@ class MascotMode:
             return
 
         if isinstance(event, Touch):
+            # Дотик — єдине, що продовжує інтерактивний режим.
+            self._idle_since = 0.0
             self.face.react_touch(event.x, event.y)
             self.face.set_state(MascotState.HAPPY)
             self._request_accent(PALETTE.ok)
@@ -108,6 +164,11 @@ class MascotMode:
         self._accent_cooldown = ACCENT_COOLDOWN_S
 
     def update(self, dt: float) -> Intent | None:
+        if self._interactive:
+            self._idle_since += dt
+            if self._idle_since >= INTERACTIVE_TIMEOUT_S:
+                self.collapse()
+
         self._since_face += dt
         self._accent_cooldown = max(0.0, self._accent_cooldown - dt)
 
