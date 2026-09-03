@@ -79,14 +79,30 @@ robi -c app/config/device.example.toml --offline
 
 ## Fake CRM
 
-Реальної CRM ще немає, тож розробка ведеться проти локального сервера.
-Він уміє те, що на справжньому backend відтворити важко:
+CRM існує (`ITRoboticsCRM`), але ролі `device` у її real-time каналі ще
+немає (`D-056`). Тому розробка йде проти локального сервера, який
+**говорить тим самим протоколом**: вхід `ws://host/ws?token=<jwt>&channels=`,
+JWT HS256, авторизація кожного каналу окремо, доставка у вигляді
+`{event, data, ts}`.
+
+Контракт має існувати як щось виконуване: документ, з яким код тихо
+розходиться за місяць, контрактом не є. Тому фейк відмовляє **до**
+рукостискання, як справжній сервер, а не приймає з'єднання й закриває
+його — інакше логіка reconnect тестувалася б проти неіснуючої поведінки.
+
+Понад це він уміє те, що на справжньому backend відтворити важко:
 
 ```bash
 python app/tools/fake_crm.py                        # звичайний цикл
 python app/tools/fake_crm.py --scenario duplicate   # той самий command_id двічі
 python app/tools/fake_crm.py --scenario expired     # прострочена команда
 python app/tools/fake_crm.py --scenario phishing    # чужі домени в QR
+```
+
+Токен для ручного під'єднання друкується так:
+
+```bash
+python app/tools/fake_crm.py --print-token --device 1
 ```
 
 Сценарій `phishing` — головна перевірка `D-038`. Очікуваний результат:
