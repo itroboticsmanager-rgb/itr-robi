@@ -18,6 +18,34 @@ Color = tuple[int, int, int]
 
 @dataclass(frozen=True, slots=True)
 class Palette:
+    # Product surfaces. None are pure white/black; every neutral leans blue.
+    canvas: Color = (236, 245, 253)
+    canvas_warm: Color = (248, 247, 244)
+    surface: Color = (248, 251, 254)
+    surface_alt: Color = (232, 242, 252)
+    surface_pressed: Color = (218, 235, 251)
+    border: Color = (205, 225, 244)
+    shadow: Color = (38, 82, 132)
+    dot_muted: Color = (174, 204, 232)
+
+    # Character scene and shell. The values follow the supplied 3D mascot:
+    # a saturated blue body around a much lighter cyan face panel.
+    scene_top: Color = (225, 241, 254)
+    scene_bottom: Color = (191, 224, 250)
+    shell_top: Color = (75, 157, 250)
+    shell_bottom: Color = (35, 103, 229)
+    shell_rim: Color = (115, 187, 249)
+    shell_shadow: Color = (16, 53, 132)
+    display_top: Color = (132, 202, 253)
+    display_bottom: Color = (83, 163, 241)
+    display_glass: Color = (151, 210, 252)
+    cheek: Color = (246, 139, 126)
+    action_blue: Color = (225, 240, 253)
+    action_lilac: Color = (239, 235, 252)
+    action_yellow: Color = (252, 244, 221)
+    action_mint: Color = (225, 246, 239)
+    action_coral: Color = (252, 233, 230)
+
     # Блакитна лицьова панель, а не колір зовнішнього корпуса.
     face_top: Color = (121, 190, 251)
     face_bottom: Color = (77, 155, 239)
@@ -30,11 +58,15 @@ class Palette:
     pupil: Color = (13, 29, 62)
     pupil_soft: Color = (27, 58, 111)
     highlight: Color = (244, 250, 255)
-    #: Лінія заплющеного ока. Раніше цим кольором малювався рот, якого в
-    #: персонажа немає — див. docstring `ui/face.py`.
-    eye_line: Color = (18, 55, 126)
+    #: Темно-синя лінія для заплющених очей і фірмової усмішки.
+    eye_line: Color = (28, 68, 145)
 
     accent: Color = (150, 207, 255)
+    accent_yellow: Color = (250, 183, 32)
+    accent_coral: Color = (241, 111, 93)
+    primary: Color = (41, 111, 232)
+    primary_soft: Color = (101, 164, 242)
+    primary_pressed: Color = (31, 88, 194)
     error: Color = (224, 83, 76)
     offline: Color = (239, 170, 55)
     ok: Color = (71, 195, 139)

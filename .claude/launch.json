@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "robi-room",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "prototypes/robi-room", "run", "dev"],
+      "port": 4173
+    },
+    {
+      "name": "robi-kiosk",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c", "import sys; sys.path.insert(0, 'app/src'); from robi.web.__main__ import main; main()",
+        "--config", "artifacts/kiosk-preview/device.toml",
+        "--root", "prototypes/robi-room/dist",
+        "--port", "4174",
+        "--offline"
+      ],
+      "port": 4174
+    }
+  ]
+}

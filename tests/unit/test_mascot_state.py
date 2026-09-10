@@ -124,12 +124,6 @@ def test_persistent_state_stays(face):
     assert face.state is MascotState.SLEEPING
 
 
-def test_face_has_no_mouth_left():
-    """Рота в персонажа немає — ні в гайді CRM, ні на 3D-референсах."""
-    from robi.ui import face as face_module
-    from robi.ui.theme import GEOMETRY, PALETTE
-
-    source = open(face_module.__file__, encoding="utf-8").read()
-    assert "_mouth_frames" not in source
-    assert not hasattr(PALETTE, "mouth")
-    assert not any(f.startswith("mouth") for f in GEOMETRY.__slots__)
+def test_face_has_brand_expression_shapes(face):
+    """Фірмова усмішка є частиною 3D-образу й змінюється разом зі станом."""
+    assert {"smile", "happy", "frown", "flat", "o"} <= set(face._mouth_variants)

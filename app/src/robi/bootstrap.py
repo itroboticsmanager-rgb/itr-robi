@@ -12,10 +12,12 @@ import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import pygame
 
 from .banners import BannerStore
+from .content_store import ContentStore
 from .config import Config
 from .content import Content, ContentError
 from .events import (
@@ -38,6 +40,8 @@ from .modes.mascot import MascotMode
 from .modes.qr import QrMode
 from .state.coordinator import Coordinator, ModeName, Priority
 from .state.machine import StateMachine, SystemState
+from .web import LocalWebService, WebServiceError, snapshot
+from .web.bridge import WebBridge
 from .ui.overlay import Overlay
 from .vision.fake import FakeVision
 
@@ -117,8 +121,13 @@ class App:
 
         self.machine = StateMachine()
         # Контент необов'язковий: без нього меню просто немає, а команда на
-        # `info` відхиляється як непідтримана (D-048).
-        self.content = self._load_content(config)
+        # `info` відхиляється як непідтримана (D-048). Набір із CRM, якщо він
+        # уже приходив, важливіший за локальний файл.
+        self._content_store = ContentStore(config.content.cache_dir) if config.content.cache_dir else None
+        self._content_pending: tuple[Content | None] | None = None
+        self._content_thread: threading.Thread | None = None
+        self._content_stop = threading.Event()
+        self.content, self._content_assets = self._initial_content(config)
         unsupported = set(Coordinator.UNSUPPORTED)
         if self.content is not None:
             unsupported.discard(ModeName.INFO)
@@ -126,6 +135,12 @@ class App:
             ModeName.MASCOT, clock=self.clock_fn, unsupported=frozenset(unsupported)
         )
         self.metrics = Metrics()
+        self._web: LocalWebService | None = None
+        self._web_revision = 0
+        self._web_bridge = WebBridge(self.clock_fn)
+        self._entered_activation = None
+        self._web_qr_key = None
+        self._web_qr = None
         self.overlay = Overlay(size)
         self.policy = UrlPolicy(config.crm.allowed_url_schemes, config.crm.allowed_domains)
 
@@ -154,8 +169,7 @@ class App:
             ModeName.QR: QrMode(size),
         }
         if self.content is not None:
-            assets = Path(config.content.assets) if config.content.assets else None
-            self.modes[ModeName.INFO] = InfoMode(size, self.content, assets)
+            self.modes[ModeName.INFO] = InfoMode(size, self.content, self._content_assets)
         self._current = ModeName.MASCOT
 
         self.crm: CrmClient | None = None
@@ -201,9 +215,18 @@ class App:
             mascot._image_for = self._banner_image
         if self.content is not None:
             root = self.content.node(self.content.root)
+            from .ui.showcase import NavAction
+
             mascot.buttons = [
-                (self.content.label_for(node_id), node_id) for node_id in root.items[:4]
+                NavAction(
+                    self.content.label_for(node_id),
+                    node_id,
+                    self.content.icon_for(node_id),
+                )
+                for node_id in root.items
             ]
+        else:
+            mascot.buttons = []
 
     def _banner_image(self, banner):
         """Картинка з кешу. Битий чи відсутній файл дає банер без картинки."""
@@ -242,6 +265,60 @@ class App:
                         mascot.banners = self._banners.load()
                         self._banner_images.clear()
             self._banner_stop.wait(self.config.banners.refresh_s)
+
+    def _initial_content(self, config: Config) -> tuple[Content | None, Path | None]:
+        """Меню з CRM, якщо набір уже був; інакше локальний файл.
+
+        Порожній набір із CRM — рішення адміністратора, а не збій, тому
+        локальний приклад на його місце не підставляється.
+        """
+        if self._content_store is not None:
+            has_set, content = self._content_store.load()
+            if has_set:
+                return content, self._content_store.dir
+        assets = Path(config.content.assets) if config.content.assets else None
+        return self._load_content(config), assets
+
+    def _refresh_content_forever(self) -> None:
+        """Меню з CRM у власному потоці: мережа не має смикати кадр."""
+        secret = self.crm.read_secret() if self.crm is not None else ""
+        while not self._content_stop.is_set():
+            if self._content_store is not None and secret:
+                ok, reason = self._content_store.refresh(self.config.content.url, secret)
+                if ok:
+                    has_set, content = self._content_store.load()
+                    if has_set and content != self.content:
+                        # Підміна — лише в головному циклі: там живуть режими
+                        # й координатор, і там видно, чи хтось зараз у меню.
+                        self._content_pending = (content,)
+                elif reason.startswith("invalid"):
+                    print(f"[content] набір із CRM відхилено, лишається попередній: {reason}")
+            self._content_stop.wait(self.config.content.refresh_s)
+
+    def _apply_pending_content(self) -> None:
+        """Нове меню з CRM стає на місце, лише коли в ньому ніхто не гортає.
+
+        Батько, що читає опис курсу, не має побачити, як сторінка зникає з-під
+        пальця: набір дочекається повернення кіоску на головну.
+        """
+        pending = self._content_pending
+        if pending is None or self._current is ModeName.INFO:
+            return
+        self._content_pending = None
+        self.content = pending[0]
+        self._content_assets = self._content_store.dir if self._content_store is not None else None
+        unsupported = set(self.coordinator.unsupported)
+        if self.content is None:
+            unsupported.add(ModeName.INFO)
+            self.modes.pop(ModeName.INFO, None)
+        else:
+            unsupported.discard(ModeName.INFO)
+            self.modes[ModeName.INFO] = InfoMode(
+                self.screen.get_size(), self.content, self._content_assets
+            )
+        self.coordinator.unsupported = frozenset(unsupported)
+        self._wire_showcase()
+        self._web_revision += 1
 
     @staticmethod
     def _load_content(config: Config) -> Content | None:
@@ -286,8 +363,137 @@ class App:
             )
             self._banner_thread.start()
 
+        if self._content_store is not None and self.config.content.url:
+            self._content_thread = threading.Thread(
+                target=self._refresh_content_forever, name="robi-content", daemon=True
+            )
+            self._content_thread.start()
+
+        self._entered_activation = self.coordinator.active
+        self._publish_web()
+        self._start_web()
+
+    def _start_web(self) -> None:
+        """Підняти локальну службу для веб-інтерфейсу, якщо її ввімкнено.
+
+        Зайнятий порт переводить у `degraded`, а не валить застосунок: на
+        рецепції кіоск без веб-частини все одно корисніший за темний екран.
+        """
+        if not self.config.web.enabled:
+            return
+        cfg = self.config.web
+        try:
+            self._web = LocalWebService(
+                self._web_snapshot, host=cfg.host, port=cfg.port, root=cfg.root,
+                action=self._web_bridge.submit, asset=self._web_asset,
+            )
+            self._web.start()
+        except WebServiceError as exc:
+            self._web = None
+            self.machine.to(SystemState.DEGRADED, f"web: {exc}")
+
+    def _web_snapshot(self) -> dict:
+        return self._web_bridge.read()
+
+    def _publish_web(self) -> None:
+        if not self.config.web.enabled:
+            return
+        mascot = self.modes[ModeName.MASCOT]
+        active = self.coordinator.active
+        state = snapshot(
+            self.content,
+            mascot.face.state,
+            device_id=self.config.device_id,
+            site=self.config.site,
+            revision=self._web_revision,
+        )
+        mode = active.mode.value
+        if mode == "mascot":
+            mode = "home"
+        # Only the validated, current QR is retained. Never persist payment data.
+        if active is not self._web_qr_key:
+            self._web_qr_key, self._web_qr = active, None
+            value = str(active.payload.get("value", ""))
+            if mode == "qr" and self.policy.check(value).ok:
+                import segno
+                self._web_qr = [list(row) for row in segno.make(value, micro=False).matrix]
+        state["display"] = {
+            "mode": mode, "node": str(active.payload.get("node", "")),
+            "qr": self._web_qr,
+            "title": str(active.payload.get("title") or "Продовжимо на телефоні"),
+            "priority": int(active.priority),
+        }
+        state["idle_timeout_s"] = self.config.content.timeout_s
+        state["mascot"]["gaze"] = list(mascot.face._gaze) if self.vision.capturing and mascot._since_face < 1.5 else None
+        state["banners"] = [
+            {"id": b.id, "title": b.title, "description": b.description,
+             "image": f"/media/banner/{b.id}" if b.image else "",
+             "image_version": b.image_version,
+             "bg_color": b.bg_color, "text_color": b.text_color,
+             "target_node": b.target_node}
+            for b in mascot.banners
+        ]
+        for node in state["content"]["nodes"]:
+            node["image"] = f"/media/content/{quote(node['id'], safe='')}" if node["image"] else ""
+        self._web_bridge.publish(state, active)
+
+    def _web_asset(self, route: str) -> Path | None:
+        target = None
+        root = None
+        if route.startswith("/media/banner/") and self._banners is not None:
+            banner = next((b for b in self.modes[ModeName.MASCOT].banners
+                           if str(b.id) == route.removeprefix("/media/banner/")), None)
+            if banner is not None and banner.image:
+                root, target = self._banners.dir, self._banners.image_path(banner)
+        elif route.startswith("/media/content/") and self.content and self._content_assets:
+            node = self.content.nodes.get(route.removeprefix("/media/content/"))
+            if node and node.image:
+                root = self._content_assets
+                target = root / node.image
+        if target is None or root is None:
+            return None
+        target = target.resolve()
+        return target if target.is_relative_to(root.resolve()) and target.is_file() else None
+
+    def _web_action(self, payload: dict) -> dict:
+        action = payload.get("action")
+        active = self.coordinator.active
+        token = self._web_snapshot().get("display", {}).get("token")
+        if action in ("close", "activity"):
+            if payload.get("token") != token or active is not self._web_bridge.activation:
+                return {"ok": False, "reason": "stale"}
+            if active.priority > Priority.USER or active.expired(self.clock_fn()):
+                return {"ok": False, "reason": "preempted"}
+            if action == "close":
+                self.coordinator.release()
+            elif active.priority <= Priority.USER:
+                # Touch renews the visitor's menu, never a payment QR.
+                if active.mode is ModeName.QR:
+                    return {"ok": False, "reason": "fixed_expiry"}
+                active.priority = Priority.USER
+                active.expires_at = self.clock_fn() + self.config.content.timeout_s
+        elif action == "menu":
+            node = str(payload.get("node", ""))
+            if not self.content or (node and node not in self.content.nodes):
+                return {"ok": False, "reason": "unknown_node"}
+            ok = self.coordinator.request(
+                ModeName.INFO,
+                Priority.USER, self.config.content.timeout_s,
+                payload={"node": node, "web_menu": True},
+            )
+            if not ok:
+                return {"ok": False, "reason": "preempted"}
+        else:
+            return {"ok": False, "reason": "unknown_action"}
+        self._publish_web()
+        return {"ok": True, "snapshot": self._web_snapshot()}
+
     def shutdown(self) -> None:
         self._banner_stop.set()
+        self._content_stop.set()
+        if self._web is not None:
+            self._web.stop()
+            self._web = None
         if self.machine.state is not SystemState.SHUTTING_DOWN:
             self.machine.to(SystemState.SHUTTING_DOWN, "requested")
         if self.crm is not None:
@@ -335,10 +541,17 @@ class App:
 
         events = self._route_touches(events)
 
+        self._apply_pending_content()
+        self._web_bridge.drain(self._web_action)
         self._pump_crm()
         changed = self.coordinator.tick()
-        if changed or self.coordinator.mode is not self._current:
+        active = self.coordinator.active
+        reenter = active is not self._entered_activation and (
+            active.command_id is not None or active.payload.get("web_menu")
+        )
+        if changed or self.coordinator.mode is not self._current or reenter:
             self._switch_to(self.coordinator.mode)
+        self._entered_activation = active
 
         mode = self.modes[self._current]
         for event in events:
@@ -370,16 +583,18 @@ class App:
         self._apply_intent(intent, sim_dt)
         self._sync_state()
 
-        mode.draw(self.screen)
-        self.overlay.draw(
-            self.screen,
-            state=self.machine.state.value,
-            mode=self._current.value,
-            online=self.crm is not None and self.crm.status.connected,
-            capturing=self.vision.capturing,
-            metrics=self.metrics,
-        )
-        pygame.display.flip()
+        self._publish_web()
+        if not (self.headless and self.config.web.enabled):
+            mode.draw(self.screen)
+            self.overlay.draw(
+                self.screen,
+                state=self.machine.state.value,
+                mode=self._current.value,
+                online=self.crm is not None and self.crm.status.connected,
+                capturing=self.vision.capturing,
+                metrics=self.metrics,
+            )
+            pygame.display.flip()
         self.metrics.frame(dt)
 
     def _route_touches(self, events: list[Event]) -> list[Event]:
@@ -456,10 +671,16 @@ class App:
         (D-038). Метод названий і публічний саме тому, що це місце треба
         тестувати прямо, а не через побічні ефекти.
         """
-        if cmd.kind is CommandKind.SHOW_QR:
+        if cmd.kind is CommandKind.SHOW_QR or (
+            cmd.kind is CommandKind.SET_MODE and cmd.payload.get("mode") == "qr"
+        ):
             verdict = self.policy.check(str(cmd.payload.get("value", "")))
             if not verdict.ok:
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, verdict.reason)
+        if cmd.kind is CommandKind.SET_MODE and cmd.payload.get("mode") == "info":
+            node = str(cmd.payload.get("node", "")).strip()
+            if node and (not self.content or node not in self.content.nodes):
+                return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unknown_node")
         return self.coordinator.apply(cmd)
 
     def _pump_crm(self) -> None:
@@ -475,6 +696,9 @@ class App:
         self.modes[self._current].exit()
         self._current = target
         self.modes[target].enter(self.coordinator.active.payload)
+        if target is ModeName.MASCOT:
+            self.modes[target].set_state_from(str(self.coordinator.active.payload.get("state", "idle")))
+        self._entered_activation = self.coordinator.active
         self._sync_camera()
 
     def _sync_camera(self) -> None:

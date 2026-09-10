@@ -128,6 +128,15 @@ class ContentConfig:
     #: залишений екран не має стояти вічно — наступний відвідувач мусить
     #: побачити маскота, а не чужу відкриту сторінку.
     timeout_s: float = 45.0
+    #: Меню з CRM: напрями й рівні, які адміністратор увімкнув на вкладці
+    #: «Кіоск ROBI». Порожній `url` — меню лише з локального `path`.
+    url: str = ""
+    #: Кеш обов'язковий, як у банерів: без мережі кіоск показує останній
+    #: вдалий набір, а не порожнє меню.
+    cache_dir: str = ""
+    #: Адміністратор перемикає напрям і чекає побачити його на стійці, тому
+    #: частіше, ніж банери, але без смикання CRM щохвилини.
+    refresh_s: float = 300.0
 
 
 @dataclass(slots=True)
@@ -146,6 +155,27 @@ class BannersConfig:
 
 
 @dataclass(slots=True)
+class WebConfig:
+    """Локальна служба, з якої читає веб-інтерфейс.
+
+    Вимкнена за замовчуванням: поки веб-частина не доведена на самому
+    планшеті, звичайний шлях кіоску має лишатися незмінним.
+
+    `host` навмисно є в конфігурації, хоч приймає лише петлю. Прапорець,
+    якого нема, неможливо виставити помилково, але й неможливо прочитати:
+    краще, щоб адреса була видима поруч із рештою налаштувань і падала на
+    старті, ніж щоб вона мовчки жила в коді.
+    """
+
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    #: Нуль означає «будь-який вільний порт»: зручно в тестах і на розробці.
+    port: int = 4173
+    #: Тека зі зібраним інтерфейсом. Порожня — служба віддає лише API.
+    root: str = ""
+
+
+@dataclass(slots=True)
 class Config:
     device_id: str = "robi-dev"
     site: str = "local"
@@ -155,6 +185,7 @@ class Config:
     vision: VisionConfig = field(default_factory=VisionConfig)
     content: ContentConfig = field(default_factory=ContentConfig)
     banners: BannersConfig = field(default_factory=BannersConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
     @staticmethod
     def load(path: str | Path | None) -> "Config":
@@ -224,6 +255,9 @@ class Config:
             path=str(k.get("path", "")),
             assets=str(k.get("assets", "")),
             timeout_s=float(k.get("timeout_s", 45.0)),
+            url=str(k.get("url", "")),
+            cache_dir=str(k.get("cache_dir", "")),
+            refresh_s=float(k.get("refresh_s", 300.0)),
         )
 
         b = raw.get("banners", {})
@@ -231,6 +265,14 @@ class Config:
             url=str(b.get("url", "")),
             cache_dir=str(b.get("cache_dir", "")),
             refresh_s=float(b.get("refresh_s", 900.0)),
+        )
+
+        w = raw.get("web", {})
+        cfg.web = WebConfig(
+            enabled=bool(w.get("enabled", False)),
+            host=str(w.get("host", "127.0.0.1")),
+            port=int(w.get("port", 4173)),
+            root=str(w.get("root", "")),
         )
 
         cfg.validate()
@@ -264,5 +306,14 @@ class Config:
         self.vision.window()  # падає з ConfigError на кривому HH:MM
         if not 5.0 <= self.content.timeout_s <= 600.0:
             raise ConfigError("content.timeout_s поза розумним діапазоном")
+        if self.content.refresh_s < 60.0:
+            raise ConfigError("content.refresh_s не може бути меншим за хвилину")
         if self.banners.refresh_s < 60.0:
             raise ConfigError("banners.refresh_s не може бути меншим за хвилину")
+        # Пристрій стоїть у холі школи поруч з анкетою на персональні дані
+        # (`D-049`). Не-локальна адреса — це відкритий порт без потреби, тож
+        # одруківка в конфігурації має зупинити старт, а не вийти в мережу.
+        if self.web.host not in ("127.0.0.1", "::1"):
+            raise ConfigError("web.host може бути лише 127.0.0.1 або ::1")
+        if not 0 <= self.web.port <= 65535:
+            raise ConfigError("web.port поза діапазоном")

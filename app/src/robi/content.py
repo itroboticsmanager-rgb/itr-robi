@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,9 +30,13 @@ from typing import Mapping
 MAX_TITLE = 60
 MAX_BODY = 600
 MAX_PRICE = 40
-#: Більше восьми пунктів не влізе на екран без прокрутки, а прокрутки у v1
-#: немає навмисно: список, який доводиться гортати, вже не є меню.
-MAX_ITEMS = 8
+MAX_ICON = 32
+#: Пункти «чого навчиться дитина»: біля стійки їх прочитують, а не гортають.
+MAX_HIGHLIGHTS = 4
+MAX_HIGHLIGHT = 120
+#: Погоджена сітка 2x5 показує до десяти великих сенсорних цілей без
+#: прокрутки. Більше не стискається: це вже окрема сторінка меню.
+MAX_ITEMS = 10
 MAX_NODES = 200
 
 KINDS = frozenset({"menu", "card"})
@@ -49,9 +54,22 @@ class Node:
     items: tuple[str, ...] = ()
     body: str = ""
     price: str = ""
+    #: Семантичний ключ із дозволеного набору UI. Невідомий ключ безпечно
+    #: переходить у generic-іконку, тому контент не може виконувати код.
+    icon: str = ""
     #: Шлях відносно теки ассетів. Відсутній файл — не помилка: картка
     #: показується без картинки (D-048 вимагає fallback, а не порожній екран).
     image: str = ""
+    #: Вік і тривалість — числа, а не текст: підпис і підбір за віком
+    #: складає інтерфейс, а контент лише каже, для кого курс.
+    age_min: int | None = None
+    age_max: int | None = None
+    duration_months: int | None = None
+    #: Короткі пункти «чого навчиться дитина». Лише текст, без розмітки.
+    highlights: tuple[str, ...] = ()
+    #: Колір акценту `#rrggbb`. Нічого, крім шістнадцяткового кольору: веб
+    #: підставляє його в CSS, і рядок довільної форми туди не має пройти.
+    accent: str = ""
 
     @property
     def is_menu(self) -> bool:
@@ -73,6 +91,9 @@ class Content:
         однієї сторінки розходяться першої ж правки.
         """
         return self.nodes[node_id].title
+
+    def icon_for(self, node_id: str) -> str:
+        return self.nodes[node_id].icon
 
     @staticmethod
     def load(path: str | Path) -> "Content":
@@ -165,6 +186,9 @@ def _node_from(entry: dict) -> Node:
     price = str(entry.get("price", "")).strip()
     _limit(node_id, "price", price, MAX_PRICE)
 
+    icon = str(entry.get("icon", "")).strip().lower()
+    _limit(node_id, "icon", icon, MAX_ICON)
+
     items_raw = entry.get("items", [])
     if not isinstance(items_raw, list):
         raise ContentError(f"{node_id}: items має бути списком")
@@ -176,6 +200,29 @@ def _node_from(entry: dict) -> Node:
     if len(set(items)) != len(items):
         raise ContentError(f"{node_id}: пункт меню повторюється")
 
+    age_min = _bounded_int(node_id, entry, "age_min", 0, 99)
+    age_max = _bounded_int(node_id, entry, "age_max", 0, 99)
+    if age_min is not None and age_max is not None and age_max < age_min:
+        raise ContentError(f"{node_id}: age_max менший за age_min")
+    duration_months = _bounded_int(node_id, entry, "duration_months", 1, 60)
+
+    highlights_raw = entry.get("highlights", [])
+    if not isinstance(highlights_raw, list) or not all(isinstance(h, str) for h in highlights_raw):
+        raise ContentError(f"{node_id}: highlights має бути списком рядків")
+    if len(highlights_raw) > MAX_HIGHLIGHTS:
+        raise ContentError(
+            f"{node_id}: {len(highlights_raw)} пунктів highlights, максимум {MAX_HIGHLIGHTS}"
+        )
+    highlights = tuple(h.strip() for h in highlights_raw)
+    if any(not h for h in highlights):
+        raise ContentError(f"{node_id}: порожній пункт highlights")
+    for highlight in highlights:
+        _limit(node_id, "highlights", highlight, MAX_HIGHLIGHT)
+
+    accent = str(entry.get("accent", "")).strip().lower()
+    if accent and not re.fullmatch(r"#[0-9a-f]{6}", accent):
+        raise ContentError(f"{node_id}: accent має бути кольором #rrggbb")
+
     return Node(
         id=node_id,
         kind=kind,
@@ -183,8 +230,26 @@ def _node_from(entry: dict) -> Node:
         items=items,
         body=body,
         price=price,
+        icon=icon,
         image=str(entry.get("image", "")).strip(),
+        age_min=age_min,
+        age_max=age_max,
+        duration_months=duration_months,
+        highlights=highlights,
+        accent=accent,
     )
+
+
+def _bounded_int(node_id: str, entry: dict, field: str, low: int, high: int) -> int | None:
+    value = entry.get(field)
+    if value is None:
+        return None
+    # bool у Python — підклас int, але `true` роком бути не може.
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ContentError(f"{node_id}: {field} має бути цілим числом")
+    if not low <= value <= high:
+        raise ContentError(f"{node_id}: {field} поза межами {low}–{high}")
+    return value
 
 
 def _limit(node_id: str, field: str, value: str, limit: int) -> None:

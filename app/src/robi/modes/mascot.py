@@ -15,7 +15,7 @@ from ..state.coordinator import ModeName
 from ..ui.face import FaceRenderer
 from ..mascot_state import MascotState, parse as parse_state
 from ..banners import Banner
-from ..ui.showcase import Showcase
+from ..ui.showcase import NavAction, Showcase
 from ..ui.theme import PALETTE
 
 #: Скільки секунд без детекції обличчя треба, щоб ROBI повернув погляд
@@ -56,9 +56,10 @@ class MascotMode:
         # і робити це під час жесту означало б ривок саме в той момент,
         # коли людина дивиться на екран.
         self.showcase = Showcase(size)
-        self.strip_face = FaceRenderer(self.showcase.face_size())
+        self.strip_face = FaceRenderer(self.showcase.face_size(), compact=True)
+        self.strip_face.show_handle = False
         self.banners: list[Banner] = []
-        self.buttons: list[tuple[str, str]] = []
+        self.buttons: list[NavAction] = []
         self._pending_node: str | None = None
         self._image_for = lambda banner: None
 
@@ -104,6 +105,7 @@ class MascotMode:
         self.face.resize(size)
         self.showcase.resize(size)
         self.strip_face.resize(self.showcase.face_size())
+        self.strip_face.show_handle = False
 
     # -- інтерактивний режим ------------------------------------------
 
@@ -165,7 +167,7 @@ class MascotMode:
             if not self._interactive and self.buttons:
                 index = self.showcase.hit_button(event.x, event.y, len(self.buttons))
                 if index is not None:
-                    self._pending_node = self.buttons[index][1]
+                    self._pending_node = self.buttons[index].key
                     return
 
             # Дотик — єдине, що продовжує інтерактивний режим.
@@ -224,11 +226,10 @@ class MascotMode:
 
     def draw(self, surface: pygame.Surface) -> None:
         if not self._interactive:
-            face = pygame.Surface(self.showcase.face_size())
+            face = pygame.Surface(self.showcase.face_size(), pygame.SRCALPHA)
             self.strip_face.draw(face)
             self.showcase.draw(
-                surface, face, self.banners,
-                [label for label, _ in self.buttons], self._image_for,
+                surface, face, self.banners, self.buttons, self._image_for,
             )
             return
         self.face.draw(surface)

@@ -126,9 +126,9 @@ def test_touch_between_items_does_nothing(mode):
     from robi.events import Source, Touch
 
     rects = mode.screen.item_rects(2)
-    gap_y = (rects[0].bottom + rects[1].top) // 2
+    gap_x = (rects[0].right + rects[1].left) // 2
     w, h = mode.screen.size
-    mode.handle(Touch(Source.TOUCH, x=rects[0].centerx / w, y=gap_y / h))
+    mode.handle(Touch(Source.TOUCH, x=gap_x / w, y=rects[0].centery / h))
     assert mode.current.id == "root"
 
 
@@ -144,14 +144,15 @@ def test_touch_on_a_card_does_not_navigate(mode):
 
 
 def test_items_do_not_overlap_and_stay_on_screen(mode):
-    for count in range(1, 9):
+    for count in range(1, 11):
         rects = mode.screen.item_rects(count)
         assert len(rects) == count
         for rect in rects:
             assert rect.height > 0
             assert rect.bottom <= mode.screen.size[1]
-        for a, b in zip(rects, rects[1:]):
-            assert a.bottom <= b.top
+        for index, a in enumerate(rects):
+            for b in rects[index + 1:]:
+                assert not a.colliderect(b)
 
 
 # --- відсутні ассети ------------------------------------------------------

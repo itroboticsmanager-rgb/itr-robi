@@ -6,6 +6,12 @@
 *.key
 *.p12
 secrets/
+# Справжня конфігурація пристрою лишається на пристрої; у Git лише шаблони.
+app/config/*.toml
+!app/config/*.example.toml
+device.toml
+# Локальні налаштування агента; спільний launch.json лишається в репозиторії.
+.claude/settings.local.json
 
 # Python
 *.egg-info/
@@ -30,6 +36,7 @@ coverage/
 build/
 dist/
 out/
+artifacts/
 tmp/
 temp/
 *.log
@@ -47,6 +54,7 @@ Desktop.ini
 
 # CAD / slicer temporary files (source and deliberate exports remain tracked)
 *.FCStd1
+*.blend1
 *.bak
 *.autosave
 *.3mf.lock
@@ -63,4 +71,3 @@ _autosave-*
 captures/
 recordings/
 diagnostics/
-

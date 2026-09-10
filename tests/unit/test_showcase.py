@@ -13,7 +13,7 @@ import pytest
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 from robi.banners import Banner  # noqa: E402
-from robi.ui.showcase import SLIDE_S, Showcase  # noqa: E402
+from robi.ui.showcase import SLIDE_S, NavAction, Showcase  # noqa: E402
 
 SIZE = (1920, 1280)
 
@@ -52,9 +52,12 @@ def test_strip_is_narrow_and_carousel_takes_the_space(showcase):
     assert box.carousel.height > box.strip.height
 
 
-def test_face_surface_is_taller_than_the_strip(showcase):
-    """Обличчя підрізається, а не стискається — інакше ROBI був би сплюснутий."""
-    assert showcase.face_size()[1] > showcase.layout().strip.height
+def test_compact_robot_uses_a_taller_cropped_portrait(showcase):
+    """Вітрина кадрує один канонічний портрет, а не сплющує іншу модель."""
+    face_w, face_h = showcase.face_size()
+    assert face_w <= showcase.size[0]
+    assert face_h > showcase.layout().strip.height
+    assert face_w / face_h == pytest.approx(1.60, rel=0.02)
 
 
 # --- влучання -------------------------------------------------------------
@@ -83,9 +86,19 @@ def test_gap_between_buttons_is_not_a_hit(showcase):
 
 def test_buttons_stay_inside_the_row(showcase):
     row = showcase.layout().buttons
-    for count in range(1, 5):
+    for count in range(1, 11):
         for rect in showcase.button_rects(count):
             assert row.left <= rect.left and rect.right <= row.right
+            assert row.top <= rect.top and rect.bottom <= row.bottom
+
+
+@pytest.mark.parametrize("count, rows", [(8, [4, 4]), (9, [5, 4]), (10, [5, 5])])
+def test_large_action_sets_are_balanced(showcase, count, rows):
+    rects = showcase.button_rects(count)
+    grouped: dict[int, int] = {}
+    for rect in rects:
+        grouped[rect.top] = grouped.get(rect.top, 0) + 1
+    assert list(grouped.values()) == rows
 
 
 def test_no_buttons_no_rects(showcase):
@@ -122,6 +135,25 @@ def test_draws_with_banners_and_buttons(showcase):
     surface = pygame.Surface(SIZE)
     face = pygame.Surface(showcase.face_size())
     showcase.draw(surface, face, banners(2), ["Курси", "Товари"], lambda b: None)
+
+
+def test_draws_all_ten_icon_actions(showcase):
+    surface = pygame.Surface(SIZE)
+    face = pygame.Surface(showcase.face_size())
+    names = [
+        "courses",
+        "events",
+        "clubs",
+        "store",
+        "gallery",
+        "video",
+        "payment",
+        "form",
+        "contacts",
+        "help",
+    ]
+    actions = [NavAction(f"Розділ {index}", str(index), name) for index, name in enumerate(names)]
+    showcase.draw(surface, face, banners(1), actions, lambda b: None)
 
 
 def test_missing_image_does_not_break_the_slide(showcase):

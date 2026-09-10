@@ -36,6 +36,11 @@ def test_menu_label_comes_from_the_target_title():
     assert c.label_for("a") == "Робототехніка"
 
 
+def test_optional_icon_is_available_to_the_ui():
+    c = build(menu("root", ["a"]), card("a", title="Робототехніка", icon="courses"))
+    assert c.icon_for("a") == "courses"
+
+
 # --- глухі кути -----------------------------------------------------------
 
 
@@ -80,6 +85,13 @@ def test_too_many_items_rejected():
         build(*nodes)
 
 
+def test_ten_items_fit_the_launcher():
+    targets = [f"n{i}" for i in range(MAX_ITEMS)]
+    nodes = [menu("root", targets)] + [card(t, icon="courses") for t in targets]
+    content = build(*nodes)
+    assert len(content.node("root").items) == 10
+
+
 def test_too_long_title_rejected():
     with pytest.raises(ContentError, match="title"):
         build(menu("root", ["a"]), card("a", title="я" * (MAX_TITLE + 1)))
@@ -108,6 +120,57 @@ def test_unknown_kind_rejected():
 def test_empty_content_rejected():
     with pytest.raises(ContentError, match="порожній"):
         Content.from_dict({"node": []})
+
+
+# --- поля напрямів і курсів -----------------------------------------------
+
+
+def test_course_details_reach_the_ui():
+    c = build(
+        menu("root", ["a"]),
+        card("a", age_min=8, age_max=12, duration_months=9,
+             highlights=["Складає робота", "Пише програму"], accent="#3B82F6"),
+    )
+    a = c.node("a")
+    assert (a.age_min, a.age_max, a.duration_months) == (8, 12, 9)
+    assert a.highlights == ("Складає робота", "Пише програму")
+    assert a.accent == "#3b82f6"
+
+
+def test_course_details_are_optional():
+    a = build(menu("root", ["a"]), card("a")).node("a")
+    assert a.age_min is None and a.duration_months is None
+    assert a.highlights == () and a.accent == ""
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("age_min", -1), ("age_max", 120), ("duration_months", 0), ("age_min", "8"), ("age_min", True)],
+)
+def test_bad_numbers_are_rejected(field, value):
+    with pytest.raises(ContentError, match=field):
+        build(menu("root", ["a"]), card("a", **{field: value}))
+
+
+def test_inverted_age_range_is_rejected():
+    with pytest.raises(ContentError, match="age_max"):
+        build(menu("root", ["a"]), card("a", age_min=12, age_max=8))
+
+
+@pytest.mark.parametrize("accent", ["red", "#fff", "url(x)", "#12345g", "#123456;x"])
+def test_accent_must_be_a_plain_color(accent):
+    """Колір іде в CSS-змінну: туди не має пройти нічого, крім кольору."""
+    with pytest.raises(ContentError, match="accent"):
+        build(menu("root", ["a"]), card("a", accent=accent))
+
+
+@pytest.mark.parametrize(
+    "highlights",
+    [["x"] * 5, ["я" * 121], [""], [{"html": "<b>"}], "не список"],
+)
+def test_highlights_are_short_plain_text(highlights):
+    with pytest.raises(ContentError, match="highlights"):
+        build(menu("root", ["a"]), card("a", highlights=highlights))
 
 
 # --- приклад із репозиторію -----------------------------------------------

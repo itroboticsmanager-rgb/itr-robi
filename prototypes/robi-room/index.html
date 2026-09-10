@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#edf3f8" />
+    <title>Робі · ITRobotics</title>
+  </head>
+  <body>
+    <main id="home" class="home">
+      <section id="window-slot" class="window-slot" aria-label="ITRobotics, школа робототехніки та програмування">
+        <div id="stage" class="logo-stage">
+          <canvas id="scene" aria-label="Об’ємний логотип ITRobotics і Робі"></canvas>
+          <img id="logo-fallback" class="logo-fallback" src="/src/logo.svg" alt="ITRobotics" />
+          <button id="window-sensor" class="cameo-sensor" aria-label="Привітатися з Робі" hidden></button>
+          <button id="motion" class="stage-motion" aria-pressed="false">Менше руху</button>
+        </div>
+      </section>
+      <section class="showcase" aria-label="Новини ITRobotics" aria-roledescription="карусель">
+        <div id="banner-slides" class="banner-slides"></div>
+        <div class="carousel-bar">
+          <div class="carousel-controls" id="carousel-controls" hidden>
+            <button id="banner-prev" class="carousel-arrow" aria-label="Попередній банер">‹</button>
+            <div id="banner-dots" class="banner-dots"></div>
+            <button id="banner-next" class="carousel-arrow" aria-label="Наступний банер">›</button>
+            <button id="banner-pause" class="carousel-pause" aria-pressed="false">Пауза</button>
+          </div>
+        </div>
+      </section>
+      <section class="launcher-section" aria-label="Розділи інформації">
+        <div class="launcher-heading"><h1>Що вас цікавить?</h1></div>
+        <nav id="launcher" class="launcher" aria-label="Головне меню"></nav>
+        <p id="content-empty" class="empty-note" hidden>Розкажемо про заняття на рецепції. Ми поруч.</p>
+      </section>
+      <footer class="home-footer"><span>ITRobotics</span></footer>
+    </main>
+    <div id="screens"></div>
+    <p id="notice" class="notice" role="status" hidden></p>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

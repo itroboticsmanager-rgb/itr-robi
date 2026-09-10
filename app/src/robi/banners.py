@@ -18,6 +18,8 @@ ROBI не знає, хто перед ним (`D-027`).
 from __future__ import annotations
 
 import json
+import hashlib
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -45,6 +47,11 @@ class Banner:
     image: str = ""
     bg_color: str = ""
     text_color: str = ""
+    target_node: str = ""
+
+    @property
+    def image_version(self) -> str:
+        return hashlib.sha256(self.image.encode("utf-8")).hexdigest()[:16]
 
 
 def _clean(value: object, limit: int) -> str:
@@ -83,6 +90,7 @@ def parse_banners(payload: object) -> list[Banner]:
                 image=str(entry.get("image_url") or "").strip(),
                 bg_color=_clean(entry.get("bg_color"), 16),
                 text_color=_clean(entry.get("text_color"), 16),
+                target_node=entry.get("target_node") if isinstance(entry.get("target_node"), str) and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}", entry["target_node"]) else "",
             )
         )
     return out
@@ -106,10 +114,17 @@ class BannerStore:
         banners = parse_banners(payload)
         # Банер без картинки на диску показувати нема чим: між записом
         # опису й завантаженням файлу могло обірватися живлення.
+        for b in banners:
+            legacy = self.dir / f"{b.id}{_suffix(b.image)}"
+            if b.image and not self.image_path(b).is_file() and legacy.is_file():
+                try:
+                    legacy.replace(self.image_path(b))
+                except OSError:
+                    pass
         return [b for b in banners if not b.image or self.image_path(b).is_file()]
 
     def image_path(self, banner: Banner) -> Path:
-        return self.dir / f"{banner.id}{_suffix(banner.image)}"
+        return self.dir / f"{banner.id}-{banner.image_version}{_suffix(banner.image)}"
 
     # -- оновлення ---------------------------------------------------------
 
@@ -142,6 +157,7 @@ class BannerStore:
         banners = parse_banners(payload)
         self.dir.mkdir(parents=True, exist_ok=True)
 
+        previous = {b.id: b for b in self.load()}
         kept: list[Banner] = []
         for banner in banners:
             if not banner.image:
@@ -149,12 +165,16 @@ class BannerStore:
                 continue
             if self._fetch_image(banner, timeout):
                 kept.append(banner)
+            elif banner.id in previous:
+                kept.append(previous[banner.id])
 
         try:
-            self.index.write_text(
+            pending_index = self.dir / "banners.pending.json"
+            pending_index.write_text(
                 json.dumps({"banners": [_as_dict(b) for b in kept]}, ensure_ascii=False),
                 encoding="utf-8",
             )
+            pending_index.replace(self.index)
         except OSError as exc:
             return False, f"write_{type(exc).__name__}"
 
@@ -214,4 +234,5 @@ def _as_dict(banner: Banner) -> dict:
         "image_url": banner.image,
         "bg_color": banner.bg_color,
         "text_color": banner.text_color,
+        "target_node": banner.target_node,
     }

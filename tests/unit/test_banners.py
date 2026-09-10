@@ -148,4 +148,24 @@ def test_image_path_uses_the_id_not_the_remote_name(tmp_path):
 def test_odd_extension_falls_back(tmp_path):
     store = BannerStore(tmp_path)
     b = Banner(id=5, title="a", image="https://cdn.example.org/file")
-    assert store.image_path(b).name == "5.img"
+    assert store.image_path(b).suffix == ".img"
+
+
+def test_changed_artwork_gets_a_different_cache_file(tmp_path):
+    store = BannerStore(tmp_path)
+    old = Banner(id=5, title="a", image="https://cdn.example.org/old.png")
+    new = Banner(id=5, title="a", image="https://cdn.example.org/new.png")
+    store.image_path(old).write_bytes(b"old artwork")
+    assert store.image_path(new) != store.image_path(old)
+    assert not store.image_path(new).exists()
+
+
+def test_kiosk_target_survives_cache(tmp_path):
+    store = BannerStore(tmp_path)
+    store.index.write_text(json.dumps(payload(entry(image_url="", target_node="courses"))), encoding="utf-8")
+    assert store.load()[0].target_node == "courses"
+
+
+@pytest.mark.parametrize("target", ["https://example.com", "../../secret", "javascript:alert(1)", ["courses"], 42])
+def test_invalid_navigation_is_not_executable(target):
+    assert parse_banners(payload(entry(target_node=target)))[0].target_node == ""

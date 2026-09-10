@@ -13,7 +13,9 @@ from __future__ import annotations
 import pygame
 
 from ..health.metrics import Metrics
+from .primitives import draw_panel
 from .theme import PALETTE
+from .typography import ui_font
 
 
 class Overlay:
@@ -25,8 +27,8 @@ class Overlay:
 
     def resize(self, size: tuple[int, int]) -> None:
         self.size = size
-        self._font = pygame.font.Font(None, max(16, int(size[1] * 0.045)))
-        self._dot_r = max(4, int(size[1] * 0.014))
+        self._font = ui_font(max(14, int(size[1] * 0.022)), weight="semibold")
+        self._dot_r = max(4, int(size[1] * 0.008))
 
     def draw(
         self,
@@ -41,23 +43,40 @@ class Overlay:
         if not self.visible:
             return
 
-        w, _ = self.size
-        pad = self._dot_r
+        w, h = self.size
+        pad = max(10, int(h * 0.014))
+        panel = pygame.Rect(
+            pad,
+            pad,
+            min(int(w * 0.46), max(360, int(w * 0.30))),
+            self._font.get_height() * 2 + pad * 2,
+        )
+        draw_panel(
+            target,
+            panel,
+            fill=PALETTE.surface,
+            radius=max(10, int(panel.height * 0.20)),
+            border=PALETTE.border,
+        )
 
         left = self._font.render(f"{state} / {mode}", True, PALETTE.hud)
-        target.blit(left, (pad * 2, pad))
+        target.blit(left, (panel.left + pad, panel.top + pad // 2))
 
         right = self._font.render(f"{metrics.recent_fps:.0f} FPS", True, PALETTE.hud)
-        target.blit(right, (w - right.get_width() - pad * 2, pad))
+        target.blit(
+            right,
+            (panel.right - right.get_width() - pad, panel.top + pad // 2),
+        )
 
         # Дві крапки: зв'язок і захоплення.
-        y = pad + left.get_height() + self._dot_r + 2
-        self._dot(target, pad * 2 + self._dot_r, y, PALETTE.ok if online else PALETTE.offline)
+        y = panel.bottom - pad // 2 - self._dot_r
+        x = panel.left + pad + self._dot_r
+        self._dot(target, x, y, PALETTE.ok if online else PALETTE.offline)
         self._dot(
             target,
-            pad * 2 + self._dot_r * 4,
+            x + self._dot_r * 4,
             y,
-            PALETTE.error if capturing else (90, 110, 140),
+            PALETTE.error if capturing else PALETTE.dot_muted,
         )
 
     def _dot(self, target: pygame.Surface, x: int, y: int, color: tuple[int, int, int]) -> None:

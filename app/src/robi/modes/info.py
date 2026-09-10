@@ -54,6 +54,7 @@ class InfoMode:
         target = str(payload.get("node", "")).strip()
         if target and target in self.content.nodes and target != self.content.root:
             self._stack.append(target)
+        self.screen.animate_in(1)
 
     def exit(self) -> None:
         self._stack = [self.content.root]
@@ -75,6 +76,7 @@ class InfoMode:
     def back(self) -> None:
         if len(self._stack) > 1:
             self._stack.pop()
+            self.screen.animate_in(-1)
         else:
             # Крок назад із кореня — це вихід із меню, а не глухий кут.
             self._release = True
@@ -82,6 +84,7 @@ class InfoMode:
     def open(self, node_id: str) -> None:
         if node_id in self.content.nodes:
             self._stack.append(node_id)
+            self.screen.animate_in(1)
 
     # -- події -------------------------------------------------------------
 
@@ -99,6 +102,7 @@ class InfoMode:
             self.open(node.items[index])
 
     def update(self, dt: float) -> Intent | None:
+        self.screen.update(dt)
         return None
 
     # -- малювання ---------------------------------------------------------
@@ -107,7 +111,8 @@ class InfoMode:
         node = self.current
         if node.is_menu:
             labels = [self.content.label_for(i) for i in node.items]
-            self.screen.draw_menu(surface, node.title, labels, show_back=True)
+            icons = [self.content.icon_for(i) for i in node.items]
+            self.screen.draw_menu(surface, node.title, labels, show_back=True, icons=icons)
         else:
             self.screen.draw_card(
                 surface, node.title, node.body, node.price, self._image(node.image)

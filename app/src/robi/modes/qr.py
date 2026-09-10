@@ -33,6 +33,7 @@ class QrMode:
     def enter(self, payload: dict) -> None:
         self._value = str(payload.get("value", ""))
         self._caption = str(payload.get("title") or DEFAULT_CAPTION)
+        self.screen.enter()
 
     def exit(self) -> None:
         # Значення не переживає вихід із режиму: платіжні посилання
@@ -46,6 +47,7 @@ class QrMode:
         return
 
     def update(self, dt: float) -> Intent | None:
+        self.screen.update(dt)
         return None
 
     def draw(self, surface: pygame.Surface) -> None:
