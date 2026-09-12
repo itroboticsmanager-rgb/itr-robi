@@ -43,7 +43,21 @@ reconnect_max_s = 30.0
 # Порожній allowed_domains придатний тільки для розробки: у production
 # порожній список означає, що ROBI покаже будь-який домен, який попросить CRM.
 allowed_url_schemes = ["https"]
-allowed_domains = ["example.org"]
+# Кожен домен тут — це QR, який CRM уміє вивести на кіоск (D-059):
+#   crm.itrobotics.com.ua       анкета, запрошення викладача й адміністратора
+#   students.itrobotics.com.ua  картка учня, гостьова кімната
+#   qr.bank.gov.ua              платіжний QR за стандартом НБУ
+#   t.me                        прив'язка батьків до Telegram-бота
+# t.me пропускає будь-яке посилання Telegram — це ціна прив'язки батьків;
+# CRM будує лише посилання на бота школи.
+# Список звіряє tests/unit/test_crm_url_contract.py: нова адреса в CRM без
+# рядка тут означає, що кіоск її мовчки не покаже.
+allowed_domains = [
+  "crm.itrobotics.com.ua",
+  "students.itrobotics.com.ua",
+  "qr.bank.gov.ua",
+  "t.me",
+]
 
 [vision]
 # "fake" — записаний сценарій без камери, OpenCV не потрібен.
