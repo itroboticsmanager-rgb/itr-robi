@@ -86,3 +86,10 @@
 .launcher-button.has-accent .launcher-icon{background:color-mix(in oklch,var(--accent) 14%,var(--paper));color:var(--accent)}
 @media(min-width:1600px){.course-item{min-height:150px}.course-thumb{width:150px;height:112px}}
 @media(max-width:700px){.course-item{grid-template-columns:auto minmax(0,1fr) auto;gap:14px;padding:12px}.course-price{grid-column:2;justify-self:start;padding:6px 10px;font-size:.85rem}.course-item>svg:last-child{grid-row:1;grid-column:3}.course-thumb{width:72px;height:56px}.course-page{grid-template-columns:1fr;gap:24px}.course-visual{position:static}.pathway-intro{font-size:1rem}}
+/* Банер не міняє розміру від кнопок під ним (D-061). Ряд кнопок один і сталої
+   висоти: що не влазить, іде на сторінку «Ще розділи», довгий підпис
+   скорочується до двох рядків, а порожнє меню займає ту саму висоту. */
+@media(min-width:701px){.launcher{grid-template-rows:88px;max-height:none;overflow:visible}.launcher-button{min-height:0;height:100%}.launcher-label{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}.empty-note{margin:0;height:88px;display:grid;place-items:center}}
+@media(min-width:1500px){.launcher{grid-template-rows:108px}.empty-note{height:108px}}
+@media(min-width:701px) and (max-height:600px){.launcher{grid-template-rows:64px}.empty-note{height:64px}}
+@media(min-width:701px){.launcher.dense .launcher-button{padding:14px 16px;gap:12px}.launcher.dense .launcher-arrow{display:none}.launcher.dense .launcher-label{overflow-wrap:normal}}

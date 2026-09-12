@@ -74,12 +74,16 @@ export function createKiosk({ pauseScene, mascot }) {
 
   function renderLauncher() {
     const root = tree.node(tree.root), all = (root?.items ?? []).filter(id => tree.visible(id));
-    const pageSize = all.length > 10 ? 9 : 10;
+    // Один ряд кнопок, завжди (D-061): другий ряд забирав би висоту банера.
+    // Що не влазить у ряд, іде на наступну сторінку через «Ще розділи».
+    const perRow = 5, paged = all.length > perRow, pageSize = paged ? perRow - 1 : perRow;
     launcherPage = Math.min(launcherPage, Math.max(0, Math.ceil(all.length / pageSize) - 1));
     const shown = all.slice(launcherPage * pageSize, (launcherPage + 1) * pageSize);
-    const count = shown.length + (all.length > 10 ? 1 : 0), launcher = $('#launcher'); launcher.replaceChildren();
-    launcher.style.setProperty('--cols', count <= 5 ? Math.max(1, count) : Math.ceil(count / 2));
-    launcher.style.setProperty('--rows', count <= 5 ? 1 : 2);
+    const count = shown.length + (paged ? 1 : 0), launcher = $('#launcher'); launcher.replaceChildren();
+    launcher.style.setProperty('--cols', Math.max(1, count));
+    launcher.style.setProperty('--rows', 1);
+    // Чотири-п'ять кнопок у ряд — тісно: стрілку прибираємо, щоб підпис не рвався посеред слова.
+    launcher.classList.toggle('dense', count > 3);
     function launcherButton(iconName, label) {
       const button = element('button', 'launcher-button');
       const badge = element('span', 'launcher-icon'); badge.append(icon(iconName));
@@ -97,10 +101,12 @@ export function createKiosk({ pauseScene, mascot }) {
       button.dataset.node = id;
       button.addEventListener('click', () => (tree.isQr(id) ? openQr(id) : open('info', id))); launcher.append(button);
     }
-    if (all.length > 10) {
+    if (paged) {
       const more = launcherButton('grid', 'Ще розділи');
       more.addEventListener('click', () => { launcherPage = (launcherPage + 1) % Math.ceil(all.length / pageSize); renderLauncher(); }); launcher.append(more);
     }
+    // Порожній ряд прибирається, а його місце займає підказка тієї ж висоти.
+    launcher.hidden = all.length === 0;
     $('#content-empty').hidden = all.length > 0;
   }
 
