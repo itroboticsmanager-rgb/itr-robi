@@ -47,7 +47,7 @@ function contentImage(node, className) {
   return img;
 }
 
-export function createContentScreen(host, navigation, { onClose, onActivity } = {}) {
+export function createContentScreen(host, navigation, { onClose, onActivity, onQr } = {}) {
   const root = element('section', 'content-screen'); root.hidden = true;
   root.setAttribute('aria-label', 'Інформація ITRobotics');
   const bar = element('header', 'content-bar');
@@ -75,7 +75,8 @@ export function createContentScreen(host, navigation, { onClose, onActivity } = 
     const age = ageLabel(child?.age_min, child?.age_max);
     if (age) button.append(element('small', 'item-note', `Для дітей ${age}`));
     button.append(icon('next'));
-    button.addEventListener('click', () => go(id));
+    // Кнопка-код («Оплатити») не сторінка меню, а екран коду — його показує кіоск.
+    button.addEventListener('click', () => (navigation.tree.isQr(id) ? onQr?.(id) : go(id)));
     return button;
   }
 
@@ -101,9 +102,9 @@ export function createContentScreen(host, navigation, { onClose, onActivity } = 
   }
 
   function renderMenu(node) {
-    const items = (node.items ?? []).filter(id => navigation.tree.has(id));
+    const items = (node.items ?? []).filter(id => navigation.tree.visible(id));
     // Меню, де всі пункти — картки, це напрям із курсами, а не розділ.
-    const courses = items.length > 0 && items.every(id => !navigation.tree.isMenu(id));
+    const courses = items.length > 0 && items.every(id => navigation.tree.isCard(id));
     const age = ageLabel(node.age_min, node.age_max);
     eyebrow.textContent = courses ? (age ? `НАПРЯМ · ДЛЯ ДІТЕЙ ${age.toUpperCase()}` : 'НАПРЯМ') : 'ОБИРАЙТЕ, ЩО ВАМ ЦІКАВО';
     if (node.body) body.append(element('p', 'pathway-intro', prose(node.body)));

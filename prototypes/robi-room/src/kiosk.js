@@ -13,7 +13,7 @@ export function createKiosk({ pauseScene, mascot }) {
   let lastBannerContent = '';
   let carouselTime = 0, carouselPaused = false, launcherPage = 0;
   let carouselResumeWithFocus = false;
-  const screen = createContentScreen($('#screens'), nav, { onClose: () => close(), onActivity: activity });
+  const screen = createContentScreen($('#screens'), nav, { onClose: () => close(), onActivity: activity, onQr: id => openQr(id) });
   const qr = element('section', 'qr-screen'); qr.hidden = true; qr.setAttribute('aria-label', 'QR-код');
   const qrBar = element('header', 'content-bar'), qrClose = element('button', 'secondary-button', 'На головну');
   qrBar.append(element('span', 'content-brand', 'ITRobotics'), qrClose);
@@ -73,7 +73,7 @@ export function createKiosk({ pauseScene, mascot }) {
   }
 
   function renderLauncher() {
-    const root = tree.node(tree.root), all = (root?.items ?? []).filter(id => tree.has(id));
+    const root = tree.node(tree.root), all = (root?.items ?? []).filter(id => tree.visible(id));
     const pageSize = all.length > 10 ? 9 : 10;
     launcherPage = Math.min(launcherPage, Math.max(0, Math.ceil(all.length / pageSize) - 1));
     const shown = all.slice(launcherPage * pageSize, (launcherPage + 1) * pageSize);
@@ -95,7 +95,7 @@ export function createKiosk({ pauseScene, mascot }) {
         button.style.setProperty('--accent', accent); button.classList.add('has-accent');
       }
       button.dataset.node = id;
-      button.addEventListener('click', () => open('info', id)); launcher.append(button);
+      button.addEventListener('click', () => (tree.isQr(id) ? openQr(id) : open('info', id))); launcher.append(button);
     }
     if (all.length > 10) {
       const more = launcherButton('grid', 'Ще розділи');
@@ -218,6 +218,14 @@ export function createKiosk({ pauseScene, mascot }) {
     if (result === null) {
       localOnly = true; deadline = performance.now() + timeout * 1000; setMode(next, node);
     } else if (!result.ok) notice('Зачекайте мить і спробуйте ще.');
+  }
+  // Код із меню («Оплатити», D-060). Посилання й перевірку тримає пристрій:
+  // сюди приходить лише готова матриця коду у знімку.
+  async function openQr(node) {
+    if (pending || !tree.visible(node)) return;
+    const result = await command({ action: 'qr', node });
+    if (result === null) notice('Код зараз недоступний. Зверніться до адміністратора.');
+    else if (!result.ok) notice('Зачекайте мить і спробуйте ще.');
   }
   async function close() {
     const old = token; dismissed = old; localOnly = false; setMode('home');

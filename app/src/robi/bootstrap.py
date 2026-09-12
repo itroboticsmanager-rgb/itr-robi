@@ -435,6 +435,10 @@ class App:
         ]
         for node in state["content"]["nodes"]:
             node["image"] = f"/media/content/{quote(node['id'], safe='')}" if node["image"] else ""
+            if node["kind"] == "qr":
+                # Саме посилання у веб не йде — лише відповідь, чи пустить його
+                # allowlist. Кнопку, яка вела б у нікуди, кіоск не показує.
+                node["allowed"] = self.policy.check(self.content.nodes[node["id"]].url).ok
         self._web_bridge.publish(state, active)
 
     def _web_asset(self, route: str) -> Path | None:
@@ -480,6 +484,25 @@ class App:
                 ModeName.INFO,
                 Priority.USER, self.config.content.timeout_s,
                 payload={"node": node, "web_menu": True},
+            )
+            if not ok:
+                return {"ok": False, "reason": "preempted"}
+        elif action == "qr":
+            # Код, який відвідувач відкриває сам кнопкою в меню («Оплатити»,
+            # D-060). Посилання береться з контенту, а не з запиту, і проходить
+            # той самий allowlist, що й команди CRM (D-038).
+            node_id = str(payload.get("node", ""))
+            node = self.content.nodes.get(node_id) if self.content else None
+            if node is None or not node.is_qr:
+                return {"ok": False, "reason": "unknown_node"}
+            if not self.policy.check(node.url).ok:
+                return {"ok": False, "reason": "not_allowed"}
+            # Дві хвилини: відкрити застосунок банку й навести камеру. Строк
+            # фіксований — дотик його не подовжує, як і в коду від CRM.
+            ok = self.coordinator.request(
+                ModeName.QR,
+                Priority.USER, 120.0,
+                payload={"value": node.url, "title": node.body or node.title, "node": node.id},
             )
             if not ok:
                 return {"ok": False, "reason": "preempted"}

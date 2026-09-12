@@ -23,6 +23,15 @@ export class ContentTree {
   labelFor(id) { return this.nodes.get(id)?.title ?? ''; }
   iconFor(id) { return this.nodes.get(id)?.icon ?? ''; }
   isMenu(id) { return this.nodes.get(id)?.kind === 'menu'; }
+  isCard(id) { return this.nodes.get(id)?.kind === 'card'; }
+  /** Кнопка, що показує посилання кодом («Оплатити», D-060). */
+  isQr(id) { return this.nodes.get(id)?.kind === 'qr'; }
+  // Кнопку коду, чиє посилання allowlist пристрою не пустить, не показуємо:
+  // дотик у нікуди гірший за відсутню кнопку. Решта вузлів видима завжди.
+  visible(id) {
+    const node = this.nodes.get(id);
+    return !!node && (node.kind !== 'qr' || node.allowed === true);
+  }
 }
 
 export class Navigation {

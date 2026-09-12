@@ -48,6 +48,7 @@ allowed_url_schemes = ["https"]
 #   students.itrobotics.com.ua  картка учня, гостьова кімната
 #   qr.bank.gov.ua              платіжний QR за стандартом НБУ
 #   t.me                        прив'язка батьків до Telegram-бота
+#   shorts.pb.ua                кнопка «Оплатити» в меню кіоску (D-060)
 # t.me пропускає будь-яке посилання Telegram — це ціна прив'язки батьків;
 # CRM будує лише посилання на бота школи.
 # Список звіряє tests/unit/test_crm_url_contract.py: нова адреса в CRM без
@@ -57,6 +58,7 @@ allowed_domains = [
   "students.itrobotics.com.ua",
   "qr.bank.gov.ua",
   "t.me",
+  "shorts.pb.ua",
 ]
 
 [vision]

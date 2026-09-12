@@ -38,8 +38,12 @@ MAX_HIGHLIGHT = 120
 #: прокрутки. Більше не стискається: це вже окрема сторінка меню.
 MAX_ITEMS = 10
 MAX_NODES = 200
+#: Дзеркало `MAX_URL_LENGTH` з `integration/policy.py`: довше посилання
+#: пристрій однаково не покаже, тож і приймати його в контент нема сенсу.
+MAX_URL = 512
 
-KINDS = frozenset({"menu", "card"})
+#: `qr` — кнопка, що показує посилання кодом на екрані (D-060): «Оплатити».
+KINDS = frozenset({"menu", "card", "qr"})
 
 
 class ContentError(ValueError):
@@ -70,10 +74,18 @@ class Node:
     #: Колір акценту `#rrggbb`. Нічого, крім шістнадцяткового кольору: веб
     #: підставляє його в CSS, і рядок довільної форми туди не має пройти.
     accent: str = ""
+    #: Лише для `qr`: посилання, яке кіоск показує кодом. Домен перевіряє
+    #: allowlist пристрою в момент показу (D-038), а не тут: контент не
+    #: знає політики, і кнопка з недозволеним доменом просто не з'являється.
+    url: str = ""
 
     @property
     def is_menu(self) -> bool:
         return self.kind == "menu"
+
+    @property
+    def is_qr(self) -> bool:
+        return self.kind == "qr"
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +185,7 @@ def _node_from(entry: dict) -> Node:
 
     kind = str(entry.get("kind", "")).strip()
     if kind not in KINDS:
-        raise ContentError(f"{node_id}: невідомий kind {kind!r}, очікується menu або card")
+        raise ContentError(f"{node_id}: невідомий kind {kind!r}, очікується menu, card або qr")
 
     title = str(entry.get("title", "")).strip()
     if not title:
@@ -223,6 +235,16 @@ def _node_from(entry: dict) -> Node:
     if accent and not re.fullmatch(r"#[0-9a-f]{6}", accent):
         raise ContentError(f"{node_id}: accent має бути кольором #rrggbb")
 
+    url = str(entry.get("url", "")).strip()
+    if kind == "qr":
+        if not url.startswith("https://"):
+            raise ContentError(f"{node_id}: qr потребує посилання https://")
+        _limit(node_id, "url", url, MAX_URL)
+        # Опис коду стоїть заголовком над ним, а не абзацом.
+        _limit(node_id, "body", body, MAX_TITLE)
+    elif url:
+        raise ContentError(f"{node_id}: url буває лише у вузла qr")
+
     return Node(
         id=node_id,
         kind=kind,
@@ -237,6 +259,7 @@ def _node_from(entry: dict) -> Node:
         duration_months=duration_months,
         highlights=highlights,
         accent=accent,
+        url=url,
     )
 
 

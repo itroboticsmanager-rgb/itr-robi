@@ -31,6 +31,8 @@ CRM_QR_URLS = {
     "pin-card": "https://students.itrobotics.com.ua/card/eyJhbGciOiJIUzI1NiJ9.eyJzdHVkZW50SWQiOjF9.c2ln",
     "guest-room": "https://students.itrobotics.com.ua/g/eyJhbGciOiJIUzI1NiJ9.eyJyb29tSWQiOjF9.c2ln",
     "parent-link": "https://t.me/ITRobotics_School_bot?start=link_1-z-1-k3x-0123456789abcdef",
+    # Не команда CRM, а вузол `qr` у меню з CRM (D-060) — той самий allowlist.
+    "kiosk-pay": "https://shorts.pb.ua/-/ee32d9fb",
 }
 
 

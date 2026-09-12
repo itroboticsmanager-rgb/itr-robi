@@ -97,9 +97,18 @@ class InfoMode:
         node = self.current
         if not node.is_menu:
             return
-        index = self.screen.hit_item(event.x, event.y, len(node.items))
+        items = self._items(node)
+        index = self.screen.hit_item(event.x, event.y, len(items))
         if index is not None:
-            self.open(node.items[index])
+            self.open(items[index])
+
+    def _items(self, node: Node) -> tuple[str, ...]:
+        """Пункти меню без кнопок-кодів.
+
+        Екран коду (`D-060`) є лише у веб-кіоску. Тут «Оплатити» відкрилося
+        б карткою без коду — глухим кутом, — тож краще його не показувати.
+        """
+        return tuple(i for i in node.items if not self.content.node(i).is_qr)
 
     def update(self, dt: float) -> Intent | None:
         self.screen.update(dt)
@@ -110,8 +119,9 @@ class InfoMode:
     def draw(self, surface: pygame.Surface) -> None:
         node = self.current
         if node.is_menu:
-            labels = [self.content.label_for(i) for i in node.items]
-            icons = [self.content.icon_for(i) for i in node.items]
+            items = self._items(node)
+            labels = [self.content.label_for(i) for i in items]
+            icons = [self.content.icon_for(i) for i in items]
             self.screen.draw_menu(surface, node.title, labels, show_back=True, icons=icons)
         else:
             self.screen.draw_card(
