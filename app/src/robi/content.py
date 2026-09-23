@@ -45,9 +45,29 @@ MAX_URL = 512
 #: `qr` — кнопка, що показує посилання кодом на екрані (D-060): «Оплатити».
 KINDS = frozenset({"menu", "card", "qr"})
 
+#: Галерея напряму чи курсу (D-063): фото й відео з занять. Дванадцять —
+#: це вже довга стрічка біля стійки, а кожне відео — десятки мегабайтів
+#: на диску пристрою.
+MAX_MEDIA = 12
+MEDIA_KINDS = frozenset({"image", "video"})
+
 
 class ContentError(ValueError):
     """Контент непридатний. Краще не стартувати, ніж завести в глухий кут."""
+
+
+@dataclass(frozen=True, slots=True)
+class Media:
+    """Одне фото чи відео галереї. Файли — шляхи відносно теки ассетів.
+
+    Як і з `image`, відсутній файл не помилка: пункт галереї просто не
+    покажеться, а решта сторінки лишається.
+    """
+
+    kind: str
+    file: str
+    #: Кадр відео, який видно, поки воно вантажиться чи не грає.
+    poster: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +98,8 @@ class Node:
     #: allowlist пристрою в момент показу (D-038), а не тут: контент не
     #: знає політики, і кнопка з недозволеним доменом просто не з'являється.
     url: str = ""
+    #: Галерея: фото й переважно вертикальні відео з занять (D-063).
+    media: tuple[Media, ...] = ()
 
     @property
     def is_menu(self) -> bool:
@@ -245,6 +267,10 @@ def _node_from(entry: dict) -> Node:
     elif url:
         raise ContentError(f"{node_id}: url буває лише у вузла qr")
 
+    media = _media_from(node_id, entry.get("media", []))
+    if media and kind == "qr":
+        raise ContentError(f"{node_id}: у кнопки коду немає галереї")
+
     return Node(
         id=node_id,
         kind=kind,
@@ -260,7 +286,30 @@ def _node_from(entry: dict) -> Node:
         highlights=highlights,
         accent=accent,
         url=url,
+        media=media,
     )
+
+
+def _media_from(node_id: str, raw: object) -> tuple[Media, ...]:
+    if not isinstance(raw, list):
+        raise ContentError(f"{node_id}: media має бути списком")
+    if len(raw) > MAX_MEDIA:
+        raise ContentError(f"{node_id}: {len(raw)} медіа, максимум {MAX_MEDIA}")
+    items: list[Media] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ContentError(f"{node_id}: пункт media має бути таблицею")
+        kind = str(entry.get("kind", "")).strip()
+        if kind not in MEDIA_KINDS:
+            raise ContentError(f"{node_id}: невідомий тип медіа {kind!r}, очікується image або video")
+        file = str(entry.get("file", "")).strip()
+        if not file:
+            raise ContentError(f"{node_id}: медіа без файлу")
+        poster = str(entry.get("poster", "")).strip()
+        if poster and kind != "video":
+            raise ContentError(f"{node_id}: постер буває лише у відео")
+        items.append(Media(kind=kind, file=file, poster=poster))
+    return tuple(items)
 
 
 def _bounded_int(node_id: str, entry: dict, field: str, low: int, high: int) -> int | None:

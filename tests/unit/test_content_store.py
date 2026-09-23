@@ -187,3 +187,93 @@ def test_image_name_does_not_follow_the_remote_path(tmp_path):
     store = ContentStore(tmp_path)
     name = store.image_name("../level", "https://cdn.example.org/../../evil.webp")
     assert "/" not in name and "\\" not in name and not name.startswith(".")
+
+
+# --- Галерея (D-063) ----------------------------------------------------------
+
+CLIP = "https://cdn.example.org/video/upload/f_mp4/clip.mp4"
+POSTER = "https://cdn.example.org/video/upload/so_1/clip.jpg"
+PHOTO = "https://cdn.example.org/image/upload/photo.jpg"
+
+
+def gallery(*items) -> dict:
+    return tree(media=list(items))
+
+
+def test_gallery_is_cached_next_to_the_tree(tmp_path, web):
+    web[URL] = gallery({"kind": "video", "url": CLIP, "poster_url": POSTER}, {"kind": "image", "url": PHOTO})
+    web[CLIP], web[POSTER], web[PHOTO] = b"mp4" * 100_000, b"poster", b"photo"
+    store = ContentStore(tmp_path)
+
+    assert store.refresh(URL, "secret") == (True, "")
+    media = store.load()[1].node("level-10").media
+    assert [(m.kind, m.file, m.poster) for m in media] == [
+        ("video", store.image_name("level-10", CLIP), store.image_name("level-10", POSTER)),
+        ("image", store.image_name("level-10", PHOTO), ""),
+    ]
+    assert media[0].file.endswith(".mp4")
+    assert (tmp_path / media[0].file).read_bytes() == b"mp4" * 100_000
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_media_that_did_not_arrive_drops_out_alone(tmp_path, web):
+    """Без одного відео галерея лишається галереєю, а постер — лише прикраса."""
+    web[URL] = gallery({"kind": "video", "url": CLIP, "poster_url": POSTER}, {"kind": "image", "url": PHOTO})
+    web[CLIP] = b"mp4"
+    store = ContentStore(tmp_path)
+
+    assert store.refresh(URL, "secret") == (True, "")
+    media = store.load()[1].node("level-10").media
+    assert [(m.kind, m.poster) for m in media] == [("video", "")]
+
+
+def test_oversized_media_is_not_kept(tmp_path, web, monkeypatch):
+    import robi.content_store as module
+
+    monkeypatch.setattr(module, "MAX_IMAGE_BYTES", 8)
+    web[URL] = gallery({"kind": "image", "url": PHOTO})
+    web[PHOTO] = b"far too large photo"
+    store = ContentStore(tmp_path)
+
+    assert store.refresh(URL, "secret") == (True, "")
+    assert store.load()[1].node("level-10").media == ()
+    assert list(tmp_path.iterdir()) == [tmp_path / "content.json"]
+
+
+@pytest.mark.parametrize("media", [
+    [{"kind": "gif", "url": PHOTO}],
+    [{"kind": "image", "url": PHOTO}] * 13,
+    "not-a-list",
+])
+def test_broken_gallery_keeps_the_previous_set(tmp_path, web, media):
+    store = ContentStore(tmp_path)
+    web[URL] = tree()
+    web[COVER] = b"img"
+    assert store.refresh(URL, "secret")[0]
+
+    web[URL] = tree(media=media)
+    ok, reason = store.refresh(URL, "secret")
+    assert not ok and reason.startswith("invalid")
+
+
+def test_crm_cannot_point_the_gallery_at_a_local_file(tmp_path, web):
+    web[URL] = gallery({"kind": "image", "url": "file:///C:/Windows/win.ini"},
+                       {"kind": "image", "url": "http://cdn.example.org/plain.jpg", "file": "../../x"})
+    web["http://cdn.example.org/plain.jpg"] = b"img"
+    store = ContentStore(tmp_path)
+    assert store.refresh(URL, "secret") == (True, "")
+    assert store.load()[1].node("level-10").media == ()
+
+
+def test_removed_media_is_swept(tmp_path, web):
+    store = ContentStore(tmp_path)
+    web[URL] = gallery({"kind": "image", "url": PHOTO})
+    web[PHOTO] = b"photo"
+    store.refresh(URL, "secret")
+    old = tmp_path / store.image_name("level-10", PHOTO)
+    assert old.exists()
+
+    web[URL] = tree()
+    web[COVER] = b"img"
+    store.refresh(URL, "secret")
+    assert not old.exists()

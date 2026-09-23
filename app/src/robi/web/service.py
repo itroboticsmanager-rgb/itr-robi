@@ -53,7 +53,16 @@ CONTENT_TYPES = {
     ".avif": "image/avif",
     ".webp": "image/webp",
     ".woff2": "font/woff2",
+    # Галерея курсів (D-063): відео віддається шматками за Range, інакше
+    # браузер не може ні перемотати, ні почати, не дочекавшись усього файлу.
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
 }
+
+#: Відео не читається в пам'ять цілим: його віддаємо шматками.
+STREAMED = frozenset({".mp4", ".webm"})
+STREAM_CHUNK = 256 * 1024
+
 
 
 class WebServiceError(RuntimeError):
@@ -93,6 +102,10 @@ def snapshot(
                     "duration_months": node.duration_months,
                     "highlights": list(node.highlights),
                     "accent": node.accent,
+                    "media": [
+                        {"kind": m.kind, "file": m.file, "poster": m.poster}
+                        for m in node.media
+                    ],
                 }
             )
     return {
@@ -203,6 +216,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _file(self, target: Path) -> None:
         suffix = target.suffix.lower()
+        if suffix in STREAMED:
+            self._ranged(target, CONTENT_TYPES[suffix])
+            return
         try:
             body = target.read_bytes()
         except OSError:
@@ -228,6 +244,76 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
+
+    def _ranged(self, target: Path, content_type: str) -> None:
+        """Файл цілим або одним діапазоном `bytes=a-b`; більше браузеру не треба."""
+        try:
+            size = target.stat().st_size
+        except OSError:
+            self._reject(HTTPStatus.NOT_FOUND)
+            return
+        start, end, status = 0, size - 1, HTTPStatus.OK
+        header = self.headers.get("Range", "")
+        if header:
+            span = _byte_range(header, size)
+            if span is None:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            start, end = span
+            status = HTTPStatus.PARTIAL_CONTENT
+        try:
+            source = target.open("rb")
+        except OSError:
+            self._reject(HTTPStatus.NOT_FOUND)
+            return
+        with source:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(end - start + 1))
+            self.send_header("Accept-Ranges", "bytes")
+            if status == HTTPStatus.PARTIAL_CONTENT:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            source.seek(start)
+            left = end - start + 1
+            try:
+                while left > 0:
+                    chunk = source.read(min(STREAM_CHUNK, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            except OSError:
+                # Браузер перемотав і закрив з'єднання — звичайна справа для відео.
+                pass
+
+
+def _byte_range(header: str, size: int) -> tuple[int, int] | None:
+    """`bytes=a-b`, `bytes=a-` або `bytes=-n` у межах файлу; інше — None."""
+    unit, _, spec = header.partition("=")
+    if unit.strip() != "bytes" or "," in spec or size <= 0:
+        return None
+    first, dash, last = spec.strip().partition("-")
+    if not dash:
+        return None
+    try:
+        if not first:
+            count = int(last)
+            if count <= 0:
+                return None
+            return max(0, size - count), size - 1
+        start = int(first)
+        end = int(last) if last else size - 1
+    except ValueError:
+        return None
+    if start < 0 or start >= size or end < start:
+        return None
+    return start, min(end, size - 1)
 
 
 class LocalWebService:

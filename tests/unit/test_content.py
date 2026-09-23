@@ -184,3 +184,36 @@ def test_shipped_example_is_valid():
     content = Content.load(example)
     assert content.node(content.root).is_menu
     assert len(content.nodes) > 3
+
+
+# --- Галерея (D-063) ----------------------------------------------------------
+
+
+def test_gallery_keeps_photos_and_videos_in_order():
+    c = build(menu("root", ["a"]), card("a", media=[
+        {"kind": "video", "file": "a.mp4", "poster": "a.jpg"},
+        {"kind": "image", "file": "b.jpg"},
+    ]))
+    assert [(m.kind, m.file, m.poster) for m in c.node("a").media] == [
+        ("video", "a.mp4", "a.jpg"), ("image", "b.jpg", ""),
+    ]
+
+
+@pytest.mark.parametrize("media, reason", [
+    ("a.jpg", "списком"),
+    (["a.jpg"], "таблицею"),
+    ([{"kind": "gif", "file": "a.gif"}], "тип медіа"),
+    ([{"kind": "image"}], "без файлу"),
+    ([{"kind": "image", "file": "a.jpg", "poster": "b.jpg"}], "постер"),
+    ([{"kind": "image", "file": f"{i}.jpg"} for i in range(13)], "максимум 12"),
+])
+def test_broken_gallery_is_rejected(media, reason):
+    with pytest.raises(ContentError, match=reason):
+        build(menu("root", ["a"]), card("a", media=media))
+
+
+def test_code_button_has_no_gallery():
+    with pytest.raises(ContentError, match="галереї"):
+        build(menu("root", ["pay"]), {"id": "pay", "kind": "qr", "title": "Оплатити",
+                                      "url": "https://pay.example.org",
+                                      "media": [{"kind": "image", "file": "a.jpg"}]})

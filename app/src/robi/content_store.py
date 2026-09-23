@@ -37,6 +37,13 @@ MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 #: забивати диск пристрою.
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
+#: Стеля відео галереї (D-063). CRM віддає вже стиснений H.264 до 1280 px,
+#: хвилина такого — 15–30 МБ; більше означає, що стиснення не спрацювало.
+MAX_VIDEO_BYTES = 80 * 1024 * 1024
+
+#: Відео тягнеться шматками прямо на диск, а не цілим у пам'ять.
+CHUNK = 256 * 1024
+
 INDEX = "content.json"
 PENDING = "content.pending.json"
 
@@ -118,20 +125,28 @@ class ContentStore:
 
         # Перевірка без картинок: битий набір не має коштувати жодного
         # завантаження, а `image` від CRM не приймається зовсім — це шлях на
-        # нашому диску, і його вирішує пристрій.
+        # нашому диску, і його вирішує пристрій. Галерею перевіряє той самий
+        # код, що й локальний файл: адреси CRM стоять на місці майбутніх файлів.
         nodes = [_without_image(entry) for entry in entries]
         try:
-            Content.from_dict({"root": root, "node": nodes})
+            Content.from_dict({"root": root, "node": [
+                {**node, "media": _remote_media(entry)} for entry, node in zip(entries, nodes)
+            ]})
         except ContentError as exc:
             return False, f"invalid: {exc}"
 
         self.dir.mkdir(parents=True, exist_ok=True)
         keep: set[str] = set()
         for entry, node in zip(entries, nodes):
-            name = self._fetch_image(str(entry.get("id", "")).strip(), entry.get("image_url"), timeout)
+            node_id = str(entry.get("id", "")).strip()
+            name = self._fetch(node_id, entry.get("image_url"), MAX_IMAGE_BYTES, timeout)
             if name:
                 node["image"] = name
                 keep.add(name)
+            media = self._fetch_media(node_id, _remote_media(entry), timeout)
+            if media:
+                node["media"] = media
+                keep.update(m[key] for m in media for key in ("file", "poster") if m.get(key))
         return self._commit({"root": root, "node": nodes}, keep)
 
     def _commit(self, payload: dict, keep: set[str]) -> tuple[bool, str]:
@@ -145,10 +160,34 @@ class ContentStore:
         self._sweep(keep)
         return True, ""
 
-    def _fetch_image(self, node_id: str, url: object, timeout: float) -> str:
+    def _fetch_media(self, node_id: str, remote: list[dict], timeout: float) -> list[dict]:
+        """Галерея вузла у вигляді локальних файлів.
+
+        Пункт, що не завантажився, випадає сам, а не валить набір: без одного
+        відео галерея лишається галереєю. Постер — прикраса, його відсутність
+        відео не скасовує.
+        """
+        media: list[dict] = []
+        for item in remote:
+            kind = item["kind"]
+            limit = MAX_VIDEO_BYTES if kind == "video" else MAX_IMAGE_BYTES
+            file = self._fetch(node_id, item["file"], limit, timeout)
+            if not file:
+                continue
+            entry = {"kind": kind, "file": file}
+            if kind == "video" and item.get("poster"):
+                poster = self._fetch(node_id, item["poster"], MAX_IMAGE_BYTES, timeout)
+                if poster:
+                    entry["poster"] = poster
+            media.append(entry)
+        return media
+
+    def _fetch(self, node_id: str, url: object, limit: int, timeout: float) -> str:
         """Ім'я файлу в кеші або порожньо. Без картинки картка лишається картою.
 
         Лише https: адресу дає CRM, і відкритий http біля стійки ні до чого.
+        Файл пишеться поруч під тимчасовим ім'ям і стає на місце лише цілим:
+        обірване посередині відео не має виглядати завантаженим наступного разу.
         """
         if not isinstance(url, str) or not url.startswith("https://") or len(url) > 1000:
             return ""
@@ -156,16 +195,23 @@ class ContentStore:
         target = self.dir / name
         if target.is_file():
             return name
+        partial = self.dir / f"{name}.part"
         try:
-            with urllib.request.urlopen(url, timeout=timeout) as response:
-                data = response.read(MAX_IMAGE_BYTES + 1)
+            size = 0
+            with urllib.request.urlopen(url, timeout=timeout) as response, partial.open("wb") as out:
+                while chunk := response.read(CHUNK):
+                    size += len(chunk)
+                    if size > limit:
+                        raise ValueError("too large")
+                    out.write(chunk)
+            if not size:
+                raise ValueError("empty")
+            partial.replace(target)
         except Exception:  # noqa: BLE001 — картинка не варта меню
-            return ""
-        if not data or len(data) > MAX_IMAGE_BYTES:
-            return ""
-        try:
-            target.write_bytes(data)
-        except OSError:
+            try:
+                partial.unlink(missing_ok=True)
+            except OSError:
+                pass
             return ""
         return name
 
@@ -187,7 +233,28 @@ class ContentStore:
 def _without_image(entry: object) -> object:
     if not isinstance(entry, dict):
         return entry
-    return {k: v for k, v in entry.items() if k not in ("image", "image_url")}
+    return {k: v for k, v in entry.items() if k not in ("image", "image_url", "media")}
+
+
+def _remote_media(entry: object) -> object:
+    """Галерея з CRM у формі локальної: адреса стоїть на місці файлу.
+
+    Непридатну форму віддаємо як є — її відкине перевірка контенту, а не
+    мовчазне «галереї немає».
+    """
+    raw = entry.get("media", []) if isinstance(entry, dict) else []
+    if not isinstance(raw, list):
+        return raw
+    items: list[object] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            items.append(item)
+            continue
+        converted = {"kind": item.get("kind", ""), "file": item.get("url", "")}
+        if item.get("poster_url"):
+            converted["poster"] = item["poster_url"]
+        items.append(converted)
+    return items
 
 
 def _suffix(url: str) -> str:

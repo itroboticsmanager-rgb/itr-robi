@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -435,6 +436,14 @@ class App:
         ]
         for node in state["content"]["nodes"]:
             node["image"] = f"/media/content/{quote(node['id'], safe='')}" if node["image"] else ""
+            # Імена файлів на диску у веб не йдуть — лише адреси, які віддає
+            # `_web_asset` за номером пункту галереї.
+            base = f"/media/content/{quote(node['id'], safe='')}/m"
+            node["media"] = [
+                {"kind": m["kind"], "url": f"{base}/{i}",
+                 "poster": f"{base}/{i}/poster" if m["poster"] else ""}
+                for i, m in enumerate(node["media"])
+            ]
             if node["kind"] == "qr":
                 # Саме посилання у веб не йде — лише відповідь, чи пустить його
                 # allowlist. Кнопку, яка вела б у нікуди, кіоск не показує.
@@ -450,10 +459,22 @@ class App:
             if banner is not None and banner.image:
                 root, target = self._banners.dir, self._banners.image_path(banner)
         elif route.startswith("/media/content/") and self.content and self._content_assets:
-            node = self.content.nodes.get(route.removeprefix("/media/content/"))
-            if node and node.image:
-                root = self._content_assets
-                target = root / node.image
+            rest = route.removeprefix("/media/content/")
+            item = re.fullmatch(r"(.+)/m/(\d{1,2})(/poster)?", rest)
+            if item is not None:
+                node = self.content.nodes.get(item.group(1))
+                index = int(item.group(2))
+                if node and index < len(node.media):
+                    media = node.media[index]
+                    name = media.poster if item.group(3) else media.file
+                    if name:
+                        root = self._content_assets
+                        target = root / name
+            else:
+                node = self.content.nodes.get(rest)
+                if node and node.image:
+                    root = self._content_assets
+                    target = root / node.image
         if target is None or root is None:
             return None
         target = target.resolve()

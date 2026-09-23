@@ -56,7 +56,7 @@ def test_snapshot_carries_content_as_data_not_markup() -> None:
     # Вузол лишається набором полів: рендерити його — робота клієнта.
     assert set(card) == {
         "id", "kind", "title", "items", "body", "price", "icon", "image",
-        "age_min", "age_max", "duration_months", "highlights", "accent",
+        "age_min", "age_max", "duration_months", "highlights", "accent", "media",
     }
 
 
@@ -348,5 +348,76 @@ def test_public_media_uses_cache_without_exposing_paths_or_secrets(tmp_path):
         assert _get(app._web, "/media/banner/7") == (200, b"image-bytes")
         assert _get(app._web, "/media/banner/../banners.json")[0] == 404
         assert _get(app._web, "/media/content/../device-secret.txt")[0] == 404
+    finally:
+        app.shutdown()
+
+
+def _range_get(service: LocalWebService, path: str, span: str) -> tuple[int, dict, bytes]:
+    request = urllib.request.Request(f"http://127.0.0.1:{service.port}{path}", headers={"Range": span})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, dict(response.headers), response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers), exc.read()
+
+
+def test_video_is_served_in_ranges_so_the_browser_can_seek(tmp_path) -> None:
+    """Без Range Chromium не почне відео, поки не прочитає файл цілим."""
+    video = bytes(range(256)) * 40
+    (tmp_path / "clip.mp4").write_bytes(video)
+    with _service(tmp_path) as service:
+        url = f"http://127.0.0.1:{service.port}/clip.mp4"
+        with urllib.request.urlopen(url, timeout=5) as response:
+            assert response.read() == video
+            assert response.headers["Content-Type"] == "video/mp4"
+            assert response.headers["Accept-Ranges"] == "bytes"
+
+        status, headers, body = _range_get(service, "/clip.mp4", "bytes=100-199")
+        assert (status, body) == (206, video[100:200])
+        assert headers["Content-Range"] == f"bytes 100-199/{len(video)}"
+
+        status, _, body = _range_get(service, "/clip.mp4", "bytes=10000-")
+        assert (status, body) == (206, video[10000:])
+        status, _, body = _range_get(service, "/clip.mp4", "bytes=-16")
+        assert (status, body) == (206, video[-16:])
+
+        status, headers, _ = _range_get(service, "/clip.mp4", f"bytes={len(video)}-")
+        assert status == 416
+        assert headers["Content-Range"] == f"bytes */{len(video)}"
+        assert _range_get(service, "/clip.mp4", "bytes=0-1,4-5")[0] == 416
+
+
+def test_gallery_is_served_by_index_without_exposing_file_names(tmp_path):
+    from dataclasses import replace
+
+    from robi.content import Media
+
+    app = _app(tmp_path)
+    app.boot()
+    try:
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        (assets / "kurs-a.jpg").write_bytes(b"\xff\xd8photo")
+        (assets / "kurs-b.mp4").write_bytes(b"video-bytes")
+        (assets / "kurs-b.jpg").write_bytes(b"\xff\xd8poster")
+        card = replace(app.content.nodes["kurs"], media=(
+            Media("image", "kurs-a.jpg"), Media("video", "kurs-b.mp4", "kurs-b.jpg"),
+        ))
+        nodes = {**app.content.nodes, "kurs": card}
+        app.content = type(app.content)(root=app.content.root, nodes=nodes)
+        app._content_assets = assets
+        app._publish_web()
+
+        node = next(n for n in app._web_snapshot()["content"]["nodes"] if n["id"] == "kurs")
+        assert node["media"] == [
+            {"kind": "image", "url": "/media/content/kurs/m/0", "poster": ""},
+            {"kind": "video", "url": "/media/content/kurs/m/1", "poster": "/media/content/kurs/m/1/poster"},
+        ]
+        assert _get(app._web, "/media/content/kurs/m/0") == (200, b"\xff\xd8photo")
+        assert _get(app._web, "/media/content/kurs/m/1") == (200, b"video-bytes")
+        assert _get(app._web, "/media/content/kurs/m/1/poster") == (200, b"\xff\xd8poster")
+        assert _get(app._web, "/media/content/kurs/m/0/poster")[0] == 404
+        assert _get(app._web, "/media/content/kurs/m/2")[0] == 404
+        assert _get(app._web, "/media/content/kurs/m/../../content.toml")[0] == 404
     finally:
         app.shutdown()
