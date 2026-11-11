@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import threading
+import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -850,7 +851,13 @@ class App:
         if self.crm is None:
             return
         for cmd in self.crm.drain():
-            self.crm.report(self.accept_command(cmd))
+            result = self.accept_command(cmd)
+            print(
+                f"{time.strftime('%H:%M:%S')} crm: {cmd.kind.value} {cmd.command_id} -> "
+                f"{result.status.value} {result.reason}".rstrip(),
+                flush=True,
+            )
+            self.crm.report(result)
         self.coordinator.forget_older_than(0)
 
     def _switch_to(self, target: ModeName) -> None:

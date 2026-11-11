@@ -42,6 +42,16 @@ import websockets
 
 from ..events import Command, CommandKind, CommandResult, now
 
+def _log(line: str) -> None:
+    """Журнал зв'язку з CRM у stdout служби (C:/ROBI/logs/service.log).
+
+    Лише події й id команд, без payload: у ньому бувають посилання на анкету
+    чи оплату. Без цього журналу «ROBI не підтвердив» не розрізнити:
+    команда не дійшла чи дійшла й була відкинута (12.11.2026).
+    """
+    print(f"{time.strftime('%H:%M:%S')} {line}", flush=True)
+
+
 #: Верхня межа вхідної черги. Без неї відновлення зв'язку після довгого
 #: простою вивалило б на пристрій усе, що накопичилось.
 INBOX_LIMIT = 64
@@ -232,6 +242,7 @@ class CrmClient:
             try:
                 async with websockets.connect(self.endpoint(), open_timeout=5) as ws:
                     self.status = LinkStatus(connected=True, attempts=0)
+                    _log(f"crm: connected device:{self._device_no}")
                     delay = self._min
                     await self._hello(ws)
                     await self._pump(ws)
@@ -247,6 +258,7 @@ class CrmClient:
                     attempts=self.status.attempts + 1,
                     last_error=detail,
                 )
+                _log(f"crm: disconnected ({detail})")
 
             if self._stop.is_set():
                 return
@@ -268,6 +280,7 @@ class CrmClient:
                 cmd = self._parse(raw)
                 if cmd is None:
                     continue
+                _log(f"crm: received {cmd.kind.value} {cmd.command_id}")
                 try:
                     self.inbox.put_nowait(cmd)
                 except queue.Full:
