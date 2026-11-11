@@ -28,6 +28,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Windows PowerShell 5.1 pools keep-alive connections, two per host. When the
+# service dies mid-connection the dead ones stay in the pool and every later
+# health check of THIS long-lived process times out, while a fresh process
+# gets an answer - the supervisor then restarted a healthy service in a loop
+# and Edge never came up (tablet, 2026-11-12). So: no keep-alive, wider pool.
+[Net.ServicePointManager]::DefaultConnectionLimit = 16
+
 # ---------------------------------------------------------------- config ---
 
 function Read-KioskConfig {
@@ -95,7 +102,7 @@ function Stop-Service-Robi {
 function Get-Health {
     $base = "http://127.0.0.1:$($Config.Port)"
     try {
-        $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 "$base/api/health"
+        $r = Invoke-WebRequest -UseBasicParsing -DisableKeepAlive -TimeoutSec 3 "$base/api/health"
         $j = $r.Content | ConvertFrom-Json
         return @{ PageAge = $j.page_age_s; Watch = $true }
     } catch {
@@ -104,7 +111,7 @@ function Get-Health {
         if ($code -ne 404) { return $null }
     }
     try {   # rollback to a release that predates /api/health
-        $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 "$base/api/snapshot"
+        $r = Invoke-WebRequest -UseBasicParsing -DisableKeepAlive -TimeoutSec 3 "$base/api/snapshot"
         if ($r.StatusCode -eq 200) { return @{ PageAge = $null; Watch = $false } }
     } catch { }
     return $null
