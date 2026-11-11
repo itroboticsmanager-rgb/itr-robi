@@ -19,3 +19,19 @@ TODO: обрати стек і додати єдину команду локал
 
 Процедура цілком — [docs/provisioning.md](../docs/provisioning.md).
 
+## kiosk
+
+`kiosk/install-kiosk.ps1` (від адміністратора) + `kiosk/robi-kiosk.ps1` (наглядач,
+працює в сесії `Robi`) — kiosk-режим планшета (`D-064`): завдання Планувальника при
+вході, служба + Edge `--kiosk` з перезапуском, політики проти сповіщень і свайпів,
+пауза для обслуговування файлом `C:\ROBI\kiosk\pause`. Обидва файли навмисно в ASCII:
+Windows PowerShell 5.1 читає `.ps1` без BOM як ANSI.
+
+Перевірка без браузера на робочому ПК:
+
+```powershell
+scripts/kiosk/robi-kiosk.ps1 -ConfigPath <тека>\kiosk.json -NoBrowser -RunSeconds 60
+```
+
+Деталі — [docs/provisioning.md](../docs/provisioning.md), крок 7.3.
+

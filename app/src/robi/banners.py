@@ -36,6 +36,12 @@ MAX_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_TITLE = 80
 MAX_DESCRIPTION = 200
 
+# CRM до появи керованого дерева напрямів зберігала для цієї дії `courses`.
+# У поточному контракті список напрямів має стабільний id `directions`. Старий
+# id нормалізуємо під час кожного читання, тому працює і свіжий payload, і вже
+# наявний локальний кеш планшета.
+LEGACY_TARGET_NODES = {"courses": "directions"}
+
 
 @dataclass(frozen=True, slots=True)
 class Banner:
@@ -57,6 +63,12 @@ class Banner:
 def _clean(value: object, limit: int) -> str:
     text = str(value or "").strip()
     return text[:limit]
+
+
+def _target_node(value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}", value):
+        return ""
+    return LEGACY_TARGET_NODES.get(value, value)
 
 
 def parse_banners(payload: object) -> list[Banner]:
@@ -90,7 +102,7 @@ def parse_banners(payload: object) -> list[Banner]:
                 image=str(entry.get("image_url") or "").strip(),
                 bg_color=_clean(entry.get("bg_color"), 16),
                 text_color=_clean(entry.get("text_color"), 16),
-                target_node=entry.get("target_node") if isinstance(entry.get("target_node"), str) and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}", entry["target_node"]) else "",
+                target_node=_target_node(entry.get("target_node")),
             )
         )
     return out

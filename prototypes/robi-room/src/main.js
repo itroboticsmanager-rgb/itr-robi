@@ -5,9 +5,9 @@ import { createKiosk } from './kiosk.js';
 const $ = s => document.querySelector(s);
 const canvas = $('#scene'), sensor = $('#window-sensor');
 const query = matchMedia('(prefers-reduced-motion: reduce)');
-let preference = null;
-try { const saved = JSON.parse(localStorage.getItem('robi-reduced-motion')); if (typeof saved === 'boolean') preference = saved; } catch { /* Optional storage. */ }
-let reduced = preference ?? query.matches;
+// Кіоск у холі: перемикача «Менше руху» немає, рух вирішує лише налаштування
+// системи. Старе збережене рішення з localStorage більше не читається.
+let reduced = query.matches;
 let stage, raf = 0, last = 0, paused = false, visible = true;
 const debug = new URLSearchParams(location.search).has('debug');
 const diagnostics = debug ? document.createElement('output') : null;
@@ -32,19 +32,24 @@ function motion(value) {
   reduced = value;
   if (stage) stage.reduced = value;
   document.documentElement.classList.toggle('reduced-motion', value);
-  $('#motion').setAttribute('aria-pressed', String(value));
-  $('#motion').textContent = value ? 'Увімкнути рух' : 'Менше руху';
   sensor.hidden = true;
   attention();
   document.documentElement.classList.remove('mascot-present');
   wake();
 }
-$('#motion').addEventListener('click', () => {
-  preference = !reduced;
-  try { localStorage.setItem('robi-reduced-motion', JSON.stringify(preference)); } catch { /* Optional. */ }
-  motion(preference);
-});
-query.addEventListener('change', e => { if (preference === null) motion(e.matches); });
+query.addEventListener('change', e => motion(e.matches));
+// Свайп «назад» на сенсорі вивів Edge зі сторінки кіоску на заблоковану
+// адресу (D-064). Жест гасить CSS (overscroll-behavior), а на випадок, якщо
+// Edge його все одно виконає, тримаємо власний запис історії: «назад» лише
+// знімає його, документ лишається тим самим. Запис ставиться в момент
+// дотику, бо Chromium пропускає під час «назад» записи, додані без дії людини.
+// Останній рубіж — наглядач, який перезапускає Edge, коли сторінка замовкла.
+function armHistoryTrap() {
+  if (history.state?.robiTrap) return;
+  try { history.pushState({ robiTrap: true }, ''); } catch { /* Not critical. */ }
+}
+addEventListener('pointerdown', armHistoryTrap, { capture: true, passive: true });
+addEventListener('keydown', armHistoryTrap, { capture: true, passive: true });
 function frame(now) {
   raf = 0;
   if (!stage || paused || !visible || document.hidden) return;

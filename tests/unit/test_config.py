@@ -46,6 +46,16 @@ def test_rejects_voice_until_implemented():
         Config.from_dict({"features": {"voice": True}})
 
 
+def test_scanner_requires_the_camera_feature():
+    with pytest.raises(ConfigError, match="scanner потребує"):
+        Config.from_dict({"features": {"camera": False, "scanner": True}})
+
+
+def test_scanner_is_explicitly_enabled():
+    assert Config.from_dict({"features": {"scanner": True}}).features.scanner is True
+    assert Config.from_dict({}).features.scanner is False
+
+
 def test_missing_file_is_an_error():
     with pytest.raises(ConfigError):
         Config.load("no/such/device.toml")
@@ -53,3 +63,24 @@ def test_missing_file_is_an_error():
 
 def test_none_path_gives_defaults():
     assert Config.load(None).device_id == "robi-dev"
+
+
+def test_wifi_fallback_keeps_the_password_out_of_config():
+    cfg = Config.from_dict({
+        "wifi_share": {
+            "ssid": "ITRobotics Guest",
+            "password_path": "C:/ROBI/secrets/guest-wifi.txt",
+            "authentication": "WPA3SAE",
+        }
+    })
+    assert cfg.wifi_share.ssid == "ITRobotics Guest"
+    assert cfg.wifi_share.password_path.endswith("guest-wifi.txt")
+
+
+def test_wifi_fallback_requires_both_network_and_password_file():
+    for value in (
+        {"ssid": "Guest"},
+        {"password_path": "C:/ROBI/secrets/guest-wifi.txt"},
+    ):
+        with pytest.raises(ConfigError, match="задаються разом"):
+            Config.from_dict({"wifi_share": value})

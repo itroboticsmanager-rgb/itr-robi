@@ -17,7 +17,7 @@ from robi.config import Config, ConfigError
 from robi.content import Content
 from robi.mascot_state import MascotState
 from robi.state.coordinator import ModeName
-from robi.web import LocalWebService, WebServiceError, snapshot
+from robi.web import LocalWebService, MemoryAsset, MemoryStream, WebServiceError, snapshot
 
 CONTENT = {
     "root": "root",
@@ -91,6 +91,19 @@ def test_service_serves_the_snapshot() -> None:
     payload = json.loads(body)
     assert payload["mascot"]["state"] == "idle"
     assert payload["device"]["id"] == "robi-1"
+
+
+def test_health_reports_when_the_page_last_polled() -> None:
+    # Наглядач питає /api/health і сам позначку не оновлює: інакше сторінка,
+    # з якої Edge пішов, виглядала б живою завдяки самим перевіркам.
+    with _service() as service:
+        _, body = _get(service, "/api/health")
+        assert json.loads(body) == {"ok": True, "page_age_s": None}
+        _get(service, "/api/health")
+        assert json.loads(_get(service, "/api/health")[1])["page_age_s"] is None
+        _get(service, "/api/snapshot")
+        age = json.loads(_get(service, "/api/health")[1])["page_age_s"]
+    assert age is not None and 0 <= age < 5
 
 
 def test_service_serves_files_from_its_own_directory(tmp_path) -> None:
@@ -198,6 +211,29 @@ def test_boot_starts_the_service_and_shutdown_stops_it(tmp_path) -> None:
     assert app._web is None
 
 
+def test_service_serves_ephemeral_local_media_without_a_file() -> None:
+    frame = b"\xff\xd8scanner-preview\xff\xd9"
+    with _service(asset=lambda path: MemoryAsset(frame, "image/jpeg") if path == "/media/scanner/frame.jpg" else None) as service:
+        url = f"http://127.0.0.1:{service.port}/media/scanner/frame.jpg"
+        with urllib.request.urlopen(url, timeout=5) as response:
+            assert response.read() == frame
+            assert response.headers["Content-Type"] == "image/jpeg"
+            assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_service_streams_preview_frames_over_one_connection_until_they_end() -> None:
+    frames = [b"\xff\xd8one\xff\xd9", b"\xff\xd8two\xff\xd9"]
+    route = "/media/scanner/stream.mjpg"
+    with _service(asset=lambda path: MemoryStream(iter(frames)) if path == route else None) as service:
+        with urllib.request.urlopen(f"http://127.0.0.1:{service.port}{route}", timeout=5) as response:
+            assert response.headers["Content-Type"] == "multipart/x-mixed-replace; boundary=robi-frame"
+            assert response.headers["Cache-Control"] == "no-store"
+            body = response.read()
+    for frame in frames:
+        part = f"--robi-frame\r\nContent-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n\r\n"
+        assert part.encode("ascii") + frame + b"\r\n" in body
+
+
 def test_service_stays_off_unless_it_is_switched_on(tmp_path) -> None:
     app = _app(tmp_path)
     app.config.web.enabled = False
@@ -255,6 +291,131 @@ def test_web_input_uses_device_priority_and_never_renews_qr(tmp_path):
         app._web_bridge.clock = lambda: app.coordinator.active.expires_at + 1
         expired = app._web_snapshot()["display"]
         assert expired["mode"] == "home" and expired["qr"] is None
+    finally:
+        app.shutdown()
+
+
+def test_wifi_action_exposes_the_current_profile_only_while_screen_is_active(tmp_path):
+    from robi.wifi import WifiAccess
+
+    class ConnectedWifi:
+        def current(self):
+            return WifiAccess("ITRobotics Guest", "robot-password", "WPA2PSK")
+
+    app = _app(tmp_path)
+    app.wifi = ConnectedWifi()
+    app.boot()
+    try:
+        home = app._web_snapshot()["display"]
+        assert "password" not in home and "network" not in home
+
+        result = app._web_action({"action": "wifi"})
+        assert result["ok"]
+        display = result["snapshot"]["display"]
+        assert display["mode"] == "qr" and display["kind"] == "wifi"
+        assert display["network"] == "ITRobotics Guest"
+        assert display["password"] == "robot-password"
+        assert len(display["qr"]) >= 21
+
+        # Even when the main loop stalls, expiry removes both the matrix and
+        # the plain-text key from the local endpoint.
+        app._web_bridge.clock = lambda: app.coordinator.active.expires_at + 1
+        expired = app._web_snapshot()["display"]
+        assert expired["mode"] == "home" and expired["qr"] is None
+        assert expired["network"] == "" and expired["password"] == ""
+    finally:
+        app.shutdown()
+
+
+def test_wifi_action_reports_an_unavailable_key_without_changing_screen(tmp_path):
+    from robi.wifi import WifiShareError
+
+    class LockedWifi:
+        def current(self):
+            raise WifiShareError("permission_denied")
+
+    app = _app(tmp_path)
+    app.wifi = LockedWifi()
+    app.boot()
+    try:
+        assert app._web_action({"action": "wifi"}) == {
+            "ok": False,
+            "reason": "permission_denied",
+        }
+        assert app._web_snapshot()["display"]["mode"] == "home"
+    finally:
+        app.shutdown()
+
+
+def test_scanner_action_owns_camera_exposes_only_local_preview_and_clears_result(tmp_path):
+    from robi.hardware.base import Health
+
+    class Scanner:
+        available = True
+        capturing = False
+
+        def __init__(self):
+            self.result = {"value": "4820001234567", "format": "EAN_13"}
+
+        def initialize(self):
+            return Health("scanner", True, "fake")
+
+        def set_preview_aspect(self, aspect):
+            self.aspect = aspect
+
+        def start_capture(self):
+            self.capturing = True
+
+        def stop_capture(self):
+            self.capturing = False
+            self.result = None
+
+        def shutdown(self):
+            self.stop_capture()
+
+        def clear_result(self):
+            self.result = None
+
+        def frame(self):
+            return b"\xff\xd8preview\xff\xd9" if self.capturing else None
+
+        def snapshot(self):
+            return {
+                "available": True,
+                "active": self.capturing,
+                "ready": self.capturing,
+                "error": "",
+                "result": self.result,
+            }
+
+    app = _app(tmp_path)
+    app.config.features.scanner = True
+    app.scanner = Scanner()
+    app.boot()
+    try:
+        opened = app._web_action({"action": "scanner", "aspect": 0.95})
+        assert opened["ok"] and opened["snapshot"]["display"]["mode"] == "scanner"
+        assert app.scanner.aspect == 0.95
+        token = opened["snapshot"]["display"]["token"]
+        # Камера ще не відкрита — потоку немає, і браузер повторить спробу.
+        assert _get(app._web, "/media/scanner/stream.mjpg")[0] == 404
+        app.step(.03)
+        assert app.scanner.capturing
+        assert _get(app._web, "/media/scanner/frame.jpg") == (200, b"\xff\xd8preview\xff\xd9")
+        assert app._web_snapshot()["display"]["scanner"]["result"]["format"] == "EAN_13"
+
+        again = app._web_action({"action": "scanner_again", "token": token})
+        assert again["ok"] and again["snapshot"]["display"]["scanner"]["result"] is None
+
+        app._web_bridge.clock = lambda: app.coordinator.active.expires_at + 1
+        expired = app._web_snapshot()["display"]
+        assert expired["mode"] == "home" and expired["scanner"] is None
+        app._web_bridge.clock = app.clock_fn
+
+        assert app._web_action({"action": "close", "token": token})["ok"]
+        app.step(.03)
+        assert not app.scanner.capturing
+        assert app._web_snapshot()["display"]["mode"] == "home"
     finally:
         app.shutdown()
 

@@ -163,7 +163,15 @@ def test_changed_artwork_gets_a_different_cache_file(tmp_path):
 def test_kiosk_target_survives_cache(tmp_path):
     store = BannerStore(tmp_path)
     store.index.write_text(json.dumps(payload(entry(image_url="", target_node="courses"))), encoding="utf-8")
-    assert store.load()[0].target_node == "courses"
+    assert store.load()[0].target_node == "directions"
+
+
+def test_current_and_custom_navigation_targets_are_preserved():
+    got = parse_banners(payload(
+        entry(id=1, target_node="directions"),
+        entry(id=2, target_node="pathway-7"),
+    ))
+    assert [banner.target_node for banner in got] == ["directions", "pathway-7"]
 
 
 @pytest.mark.parametrize("target", ["https://example.com", "../../secret", "javascript:alert(1)", ["courses"], 42])

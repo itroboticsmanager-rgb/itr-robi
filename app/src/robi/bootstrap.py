@@ -41,8 +41,10 @@ from .modes.mascot import MascotMode
 from .modes.qr import QrMode
 from .state.coordinator import Coordinator, ModeName, Priority
 from .state.machine import StateMachine, SystemState
-from .web import LocalWebService, WebServiceError, snapshot
+from .web import LocalWebService, MemoryAsset, MemoryStream, WebServiceError, snapshot
 from .web.bridge import WebBridge
+from .scanner import BarcodeScanner
+from .wifi import WifiAccess, WifiShareError, WindowsWifiProvider
 from .ui.overlay import Overlay
 from .vision.fake import FakeVision
 
@@ -142,6 +144,18 @@ class App:
         self._entered_activation = None
         self._web_qr_key = None
         self._web_qr = None
+        wifi_fallback = None
+        wifi_cfg = config.wifi_share
+        if wifi_cfg.ssid and wifi_cfg.password_path:
+            try:
+                password = Path(wifi_cfg.password_path).read_text(encoding="utf-8").rstrip("\r\n")
+            except OSError:
+                password = ""
+            if password:
+                wifi_fallback = WifiAccess(
+                    wifi_cfg.ssid, password, wifi_cfg.authentication
+                )
+        self.wifi = WindowsWifiProvider(wifi_fallback)
         self.overlay = Overlay(size)
         self.policy = UrlPolicy(config.crm.allowed_url_schemes, config.crm.allowed_domains)
 
@@ -164,6 +178,7 @@ class App:
             )
         else:
             self.vision = FakeVision()
+        self.scanner = BarcodeScanner(device_index=config.vision.device_index)
 
         self.modes: dict[ModeName, object] = {
             ModeName.MASCOT: MascotMode(size),
@@ -344,6 +359,8 @@ class App:
         checks = [self.tof.initialize(), self.nfc.initialize(), self.outputs.initialize()]
         if self.config.features.camera:
             checks.append(self.vision.initialize())
+        if self.config.features.scanner:
+            checks.append(self.scanner.initialize())
 
         failed = [c.name for c in checks if not c.ok]
         if failed:
@@ -411,11 +428,17 @@ class App:
         mode = active.mode.value
         if mode == "mascot":
             mode = "home"
+        scanner_active = active.payload.get("kind") == "scanner"
+        if scanner_active:
+            mode = "scanner"
         # Only the validated, current QR is retained. Never persist payment data.
         if active is not self._web_qr_key:
             self._web_qr_key, self._web_qr = active, None
             value = str(active.payload.get("value", ""))
-            if mode == "qr" and self.policy.check(value).ok:
+            # Visitor/CRM links still pass the URL allowlist. The Wi-Fi value
+            # is not a URL and is assembled entirely by WindowsWifiProvider.
+            wifi_value = active.payload.get("kind") == "wifi"
+            if mode == "qr" and (wifi_value or self.policy.check(value).ok):
                 import segno
                 self._web_qr = [list(row) for row in segno.make(value, micro=False).matrix]
         state["display"] = {
@@ -424,6 +447,19 @@ class App:
             "title": str(active.payload.get("title") or "Продовжимо на телефоні"),
             "priority": int(active.priority),
         }
+        state["capabilities"] = {
+            "scanner": bool(self.config.features.scanner and self.scanner.available),
+        }
+        if scanner_active:
+            state["display"].update(kind="scanner", scanner=self.scanner.snapshot())
+        if active.payload.get("kind") == "wifi":
+            # The key exists only while the visitor's fixed-duration screen is
+            # active. It is never part of the ordinary home snapshot.
+            state["display"].update(
+                kind="wifi",
+                network=str(active.payload.get("network", "")),
+                password=str(active.payload.get("password", "")),
+            )
         state["idle_timeout_s"] = self.config.content.timeout_s
         state["mascot"]["gaze"] = list(mascot.face._gaze) if self.vision.capturing and mascot._since_face < 1.5 else None
         state["banners"] = [
@@ -450,7 +486,21 @@ class App:
                 node["allowed"] = self.policy.check(self.content.nodes[node["id"]].url).ok
         self._web_bridge.publish(state, active)
 
-    def _web_asset(self, route: str) -> Path | None:
+    def _scanner_frames(self):
+        """Кадри прев'ю для MJPEG-потоку; кінчаються разом із захопленням."""
+        seq = 0
+        while self.scanner.capturing:
+            frame = self.scanner.wait_frame(seq, timeout=1.0)
+            if frame is not None:
+                seq, body = frame
+                yield body
+
+    def _web_asset(self, route: str) -> Path | MemoryAsset | MemoryStream | None:
+        if route == "/media/scanner/stream.mjpg":
+            return MemoryStream(self._scanner_frames()) if self.scanner.capturing else None
+        if route == "/media/scanner/frame.jpg":
+            frame = self.scanner.frame()
+            return MemoryAsset(frame, "image/jpeg") if frame is not None else None
         target = None
         root = None
         if route.startswith("/media/banner/") and self._banners is not None:
@@ -484,16 +534,21 @@ class App:
         action = payload.get("action")
         active = self.coordinator.active
         token = self._web_snapshot().get("display", {}).get("token")
-        if action in ("close", "activity"):
+        if action in ("close", "activity", "scanner_again"):
             if payload.get("token") != token or active is not self._web_bridge.activation:
                 return {"ok": False, "reason": "stale"}
             if active.priority > Priority.USER or active.expired(self.clock_fn()):
                 return {"ok": False, "reason": "preempted"}
             if action == "close":
                 self.coordinator.release()
+            elif action == "scanner_again":
+                if active.payload.get("kind") != "scanner":
+                    return {"ok": False, "reason": "wrong_mode"}
+                self.scanner.clear_result()
+                active.expires_at = self.clock_fn() + 120.0
             elif active.priority <= Priority.USER:
                 # Touch renews the visitor's menu, never a payment QR.
-                if active.mode is ModeName.QR:
+                if active.mode is ModeName.QR and active.payload.get("kind") != "scanner":
                     return {"ok": False, "reason": "fixed_expiry"}
                 active.priority = Priority.USER
                 active.expires_at = self.clock_fn() + self.config.content.timeout_s
@@ -527,6 +582,42 @@ class App:
             )
             if not ok:
                 return {"ok": False, "reason": "preempted"}
+        elif action == "wifi":
+            # SSID and key come from the active Windows profile, never from the
+            # browser request. Corporate 802.1X profiles cannot be shared as a
+            # useful camera QR and are rejected by the adapter.
+            try:
+                wifi = self.wifi.current()
+            except WifiShareError as exc:
+                return {"ok": False, "reason": exc.reason}
+            ok = self.coordinator.request(
+                ModeName.QR,
+                Priority.USER,
+                120.0,
+                payload={
+                    "value": wifi.qr_payload,
+                    "title": "Підключіться до Wi-Fi",
+                    "kind": "wifi",
+                    "network": wifi.ssid,
+                    "password": wifi.password,
+                },
+            )
+            if not ok:
+                return {"ok": False, "reason": "preempted"}
+        elif action == "scanner":
+            if not self.config.features.scanner or not self.scanner.available:
+                return {"ok": False, "reason": "scanner_unavailable"}
+            # Пропорції вікна прев'ю: сервер віддає рівно ту частину кадру,
+            # яку браузер покаже, без зменшення й розтягування назад.
+            self.scanner.set_preview_aspect(payload.get("aspect"))
+            ok = self.coordinator.request(
+                ModeName.QR,
+                Priority.USER,
+                120.0,
+                payload={"kind": "scanner"},
+            )
+            if not ok:
+                return {"ok": False, "reason": "preempted"}
         else:
             return {"ok": False, "reason": "unknown_action"}
         self._publish_web()
@@ -542,6 +633,7 @@ class App:
             self.machine.to(SystemState.SHUTTING_DOWN, "requested")
         if self.crm is not None:
             self.crm.stop()
+        self.scanner.shutdown()
         self.vision.shutdown()
         self.tof.shutdown()
         self.nfc.shutdown()
@@ -754,6 +846,15 @@ class App:
         якому це скорочує вік.
         """
         mode = self.modes[self._current]
+        scanner_active = self.coordinator.active.payload.get("kind") == "scanner"
+        if scanner_active:
+            if self.vision.capturing:
+                self.vision.stop_capture()
+            if not self.scanner.capturing:
+                self.scanner.start_capture()
+            return
+        if self.scanner.capturing:
+            self.scanner.stop_capture()
         wants = (
             mode.wants_camera()
             and self.config.features.camera

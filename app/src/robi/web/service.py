@@ -23,11 +23,12 @@ from __future__ import annotations
 import json
 import threading
 import socket
+import time
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Iterator, Mapping
 from urllib.parse import unquote, urlparse
 
 from ..content import Content
@@ -62,7 +63,6 @@ CONTENT_TYPES = {
 #: Відео не читається в пам'ять цілим: його віддаємо шматками.
 STREAMED = frozenset({".mp4", ".webm"})
 STREAM_CHUNK = 256 * 1024
-
 
 
 class WebServiceError(RuntimeError):
@@ -120,11 +120,57 @@ def snapshot(
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryAsset:
+    """Короткоживучий локальний медіафайл, який ніколи не пишеться на диск."""
+
+    body: bytes
+    content_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryStream:
+    """Живий MJPEG-потік із пам'яті: усі кадри йдуть одним з'єднанням.
+
+    Запит на кожен кадр прив'язував плавність прев'ю до таймера сторінки й
+    коштував нове з'єднання на кадр. Тут кадр іде браузеру тієї миті, коли
+    він з'явився; ітератор закінчується разом із захопленням камери.
+    """
+
+    frames: Iterator[bytes]
+    content_type: str = "image/jpeg"
+
+
+class PageBeat:
+    """Коли сторінка кіоску востаннє питала знімок (D-064).
+
+    Сторінка опитує `/api/snapshot` кожні 0.25-0.75 с. Якщо Edge пішов зі
+    сторінки (свайп «назад», заблокована адреса, сторінка помилки, зависання),
+    опитування зникає, а сам процес Edge живий — наглядач бачить це лише
+    так. `/api/health`, який питає наглядач, позначки не оновлює.
+    """
+
+    __slots__ = ("_last", "_lock")
+
+    def __init__(self) -> None:
+        self._last: float | None = None
+        self._lock = threading.Lock()
+
+    def touch(self) -> None:
+        with self._lock:
+            self._last = time.monotonic()
+
+    def age(self) -> float | None:
+        with self._lock:
+            return None if self._last is None else time.monotonic() - self._last
+
+
+@dataclass(frozen=True, slots=True)
 class _Route:
     root: Path | None
     provider: Callable[[], Mapping]
     action: Callable | None = None
     asset: Callable | None = None
+    beat: PageBeat | None = None
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -141,14 +187,25 @@ class _Handler(BaseHTTPRequestHandler):
             return
         path = unquote(urlparse(self.path).path)
         if path == "/api/snapshot":
+            if self.route.beat is not None:
+                self.route.beat.touch()
             self._json(dict(self.route.provider()))
+            return
+        if path == "/api/health":
+            age = self.route.beat.age() if self.route.beat is not None else None
+            self._json({"ok": True, "page_age_s": None if age is None else round(age, 1)})
             return
         if path.startswith("/media/") and self.route.asset is not None:
             target = self.route.asset(path)
             if target is None:
                 self._reject(HTTPStatus.NOT_FOUND)
             else:
-                self._file(target)
+                if isinstance(target, MemoryStream):
+                    self._stream(target)
+                elif isinstance(target, MemoryAsset):
+                    self._bytes(target.body, target.content_type, "no-store")
+                else:
+                    self._file(target)
             return
         self._static(path)
 
@@ -237,10 +294,13 @@ class _Handler(BaseHTTPRequestHandler):
         if content_type is None:
             self._reject(HTTPStatus.NOT_FOUND)
             return
+        self._bytes(body, content_type, "no-cache")
+
+    def _bytes(self, body: bytes, content_type: str, cache_control: str) -> None:
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
@@ -291,6 +351,26 @@ class _Handler(BaseHTTPRequestHandler):
             except OSError:
                 # Браузер перемотав і закрив з'єднання — звичайна справа для відео.
                 pass
+
+    def _stream(self, stream: MemoryStream) -> None:
+        boundary = "robi-frame"
+        self.close_connection = True
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", f"multipart/x-mixed-replace; boundary={boundary}")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        try:
+            for body in stream.frames:
+                head = f"--{boundary}\r\nContent-Type: {stream.content_type}\r\nContent-Length: {len(body)}\r\n\r\n"
+                self.wfile.write(head.encode("ascii") + body + b"\r\n")
+        except OSError:
+            # Браузер прибрав зображення й закрив з'єднання — звичайний кінець потоку.
+            pass
+        finally:
+            close = getattr(stream.frames, "close", None)
+            if close is not None:
+                close()
 
 
 def _byte_range(header: str, size: int) -> tuple[int, int] | None:
@@ -343,7 +423,7 @@ class LocalWebService:
             static = Path(root).resolve()
             if not static.is_dir():
                 raise WebServiceError(f"тека веб-інтерфейсу не знайдена: {static}")
-        self._route = _Route(root=static, provider=provider, action=action, asset=asset)
+        self._route = _Route(root=static, provider=provider, action=action, asset=asset, beat=PageBeat())
         self._host = host
         self._port = port
         self._server: ThreadingHTTPServer | None = None

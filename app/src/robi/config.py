@@ -50,6 +50,7 @@ class CrmConfig:
 @dataclass(slots=True)
 class FeaturesConfig:
     camera: bool = True
+    scanner: bool = False
     nfc: bool = True
     voice: bool = False
     rgb: bool = True
@@ -176,6 +177,19 @@ class WebConfig:
 
 
 @dataclass(slots=True)
+class WifiShareConfig:
+    """Optional kiosk fallback when Windows hides the saved profile key.
+
+    The password itself stays in a separate device-only file. ``ssid`` is
+    deliberately required with it so the key always names its network.
+    """
+
+    ssid: str = ""
+    password_path: str = ""
+    authentication: str = "WPA2PSK"
+
+
+@dataclass(slots=True)
 class Config:
     device_id: str = "robi-dev"
     site: str = "local"
@@ -186,6 +200,7 @@ class Config:
     content: ContentConfig = field(default_factory=ContentConfig)
     banners: BannersConfig = field(default_factory=BannersConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    wifi_share: WifiShareConfig = field(default_factory=WifiShareConfig)
 
     @staticmethod
     def load(path: str | Path | None) -> "Config":
@@ -231,6 +246,7 @@ class Config:
         f = raw.get("features", {})
         cfg.features = FeaturesConfig(
             camera=bool(f.get("camera", True)),
+            scanner=bool(f.get("scanner", False)),
             nfc=bool(f.get("nfc", True)),
             voice=bool(f.get("voice", False)),
             rgb=bool(f.get("rgb", True)),
@@ -275,6 +291,13 @@ class Config:
             root=str(w.get("root", "")),
         )
 
+        wifi = raw.get("wifi_share", {})
+        cfg.wifi_share = WifiShareConfig(
+            ssid=str(wifi.get("ssid", "")),
+            password_path=str(wifi.get("password_path", "")),
+            authentication=str(wifi.get("authentication", "WPA2PSK")),
+        )
+
         cfg.validate()
         return cfg
 
@@ -291,6 +314,8 @@ class Config:
             raise ConfigError("crm.device_no має бути додатним")
         if self.features.voice:
             raise ConfigError("voice ще не реалізовано; лишайте features.voice = false")
+        if self.features.scanner and not self.features.camera:
+            raise ConfigError("scanner потребує features.camera = true")
         if self.vision.backend not in ("fake", "camera"):
             raise ConfigError(f"невідомий vision.backend: {self.vision.backend!r}")
         if not 0.5 <= self.vision.fps <= 60:
@@ -317,3 +342,10 @@ class Config:
             raise ConfigError("web.host може бути лише 127.0.0.1 або ::1")
         if not 0 <= self.web.port <= 65535:
             raise ConfigError("web.port поза діапазоном")
+        wifi = self.wifi_share
+        if bool(wifi.ssid) != bool(wifi.password_path):
+            raise ConfigError("wifi_share.ssid і wifi_share.password_path задаються разом")
+        if wifi.authentication.upper() not in {
+            "WEP", "WPAPSK", "WPA2PSK", "WPA3SAE", "OPEN", "NONE"
+        }:
+            raise ConfigError("wifi_share.authentication не підтримується QR-кодом")

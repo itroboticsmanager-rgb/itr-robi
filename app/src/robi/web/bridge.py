@@ -30,7 +30,11 @@ class WebBridge:
         remaining = None if expires is None else max(0, expires - self.clock())
         display = dict(state["display"], remaining_s=remaining)
         if remaining == 0:
-            display.update(mode="home", qr=None, node="")
+            # A stalled device loop must not leave either a payment code or a
+            # Wi-Fi password in the locally served snapshot after expiry.
+            display.update(
+                mode="home", qr=None, node="", kind="", network="", password="", scanner=None
+            )
         return dict(state, display=display)
 
     def submit(self, payload):
