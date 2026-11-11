@@ -120,9 +120,14 @@ function Start-Service-Robi {
     if (-not (Test-Path -LiteralPath $Config.Python)) { throw "python not found: $($Config.Python)" }
 
     Stop-Service-Robi   # leftovers from a previous supervisor or the old launcher
+    # A killed service lets go of its log files a moment later; rotating them
+    # before that failed with "file is being used" (seen on the tablet).
+    for ($i = 0; $i -lt 20 -and @(Find-ServiceProcesses).Count -gt 0; $i++) { Start-Sleep -Milliseconds 250 }
     foreach ($name in 'service.log', 'service-error.log') {
         $f = Join-Path $Config.LogDir $name
-        if (Test-Path -LiteralPath $f) { Move-Item -LiteralPath $f -Destination "$f.prev" -Force }
+        if (Test-Path -LiteralPath $f) {
+            try { Move-Item -LiteralPath $f -Destination "$f.prev" -Force -ErrorAction Stop } catch { Start-Sleep -Milliseconds 500 }
+        }
     }
     $code = "import sys; sys.path.insert(0, r'$src'); from robi.web.__main__ import main; main()"
     $argList = @('-c', ('"' + $code + '"'), '--config', ('"' + $Config.DeviceConfig + '"'),

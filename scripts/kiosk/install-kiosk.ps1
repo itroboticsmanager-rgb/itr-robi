@@ -249,10 +249,15 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $account
 # finds the supervisor alive exits at once (mutex); a tick after a crash
 # becomes the new supervisor.
 $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)).Repetition
+# The logon trigger only starts repeating at the NEXT logon, so re-registering
+# the task (every install) would leave no guardian until a reboot (seen on the
+# tablet 2026-11-12). A time trigger repeats from now on; with an interactive
+# principal it only fires while Robi is logged on.
+$tick = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
 $taskPrincipal = New-ScheduledTaskPrincipal -UserId $account -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $taskPrincipal `
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($trigger, $tick) -Principal $taskPrincipal `
     -Settings $settings -Description 'ROBI kiosk guardian: keeps the supervisor alive (D-064)' -Force | Out-Null
 Say "task '$TaskName' registered for $account"
 
@@ -273,7 +278,8 @@ if ($StartNow) {
     Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" |
         Where-Object { $_.CommandLine -like '*robi-kiosk.ps1*' } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Start-ScheduledTask -TaskName $TaskName
+    # schtasks returns at once; Start-ScheduledTask hung over SSH on the tablet.
+    & schtasks.exe /run /tn $TaskName | Out-Null
     Say "guardian started (works only while $account is logged on)"
 }
 
