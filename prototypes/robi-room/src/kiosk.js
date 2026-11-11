@@ -67,7 +67,8 @@ export function createKiosk({ pauseScene, mascot }) {
     scannerFrame.src = `/media/scanner/stream.mjpg?v=${Date.now()}`;
   }
   // Анкета з CRM (D-065): та сама сторінка CRM у фреймі, ми лише рамка навколо.
-  let lastFormActivity = 0;
+  let lastFormActivity = 0, lastSnapshotAt = performance.now();
+  const FORM_OFFLINE_MS = 15000;
   const form = createFormScreen($('#screens'), { onClose: () => close(), onActivity: () => formActivity() });
   function formActivity() {
     const now = performance.now();
@@ -279,7 +280,7 @@ export function createKiosk({ pauseScene, mascot }) {
 
   function accept(snapshot, elapsed = 0) {
     if (!snapshot?.display) return;
-    connected = true;
+    connected = true; lastSnapshotAt = performance.now();
     timeout = Number.isFinite(snapshot.idle_timeout_s) ? Math.max(15, snapshot.idle_timeout_s) : 45;
     const hadScanner = scannerAvailable;
     scannerAvailable = snapshot.capabilities?.scanner === true;
@@ -311,7 +312,11 @@ export function createKiosk({ pauseScene, mascot }) {
   }
   function disconnected() {
     connected = false;
-    // Без служби пристрою анкету ніхто не закриє за строком — закриваємо самі (D-049).
+    // Анкету не рвемо через одне повільне опитування: поки Surface вантажить
+    // сторінку CRM у фрейм, служба може не встигнути за 2,5 с (12.11.2026 так
+    // анкета зникала за секунду). Закриваємо, лише коли служба мовчить довго —
+    // тоді строк анкети справді нікому стежити (D-049).
+    if (mode === 'form' && performance.now() - lastSnapshotAt < FORM_OFFLINE_MS) return;
     if (mode === 'qr' || mode === 'scanner' || mode === 'form') { dismissed = token; setMode('home'); }
   }
   let commandIdle = Promise.resolve();
