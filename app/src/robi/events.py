@@ -105,6 +105,8 @@ class NfcTouched(Event):
 class CommandKind(str, Enum):
     SET_MODE = "command.set_mode"
     SHOW_QR = "command.show_qr"
+    #: Анкета, яку батьки заповнюють просто на планшеті (D-065).
+    OPEN_FORM = "command.open_form"
     CANCEL = "command.cancel"
     REQUEST_STATUS = "command.request_status"
 

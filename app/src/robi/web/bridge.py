@@ -33,7 +33,8 @@ class WebBridge:
             # A stalled device loop must not leave either a payment code or a
             # Wi-Fi password in the locally served snapshot after expiry.
             display.update(
-                mode="home", qr=None, node="", kind="", network="", password="", scanner=None
+                mode="home", qr=None, node="", kind="", network="", password="", scanner=None,
+                url="", form="",
             )
         return dict(state, display=display)
 

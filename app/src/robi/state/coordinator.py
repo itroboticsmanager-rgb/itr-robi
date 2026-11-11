@@ -17,6 +17,9 @@ from ..events import Command, CommandKind, CommandResult, CommandStatus, now
 class ModeName(str, Enum):
     MASCOT = "mascot"
     QR = "qr"
+    #: Анкета з CRM у фреймі кіоску (D-065). Екрана pygame не має:
+    #: пристрій без веб-кіоску таку команду відхиляє.
+    FORM = "form"
     INFO = "info"
     NFC = "nfc"
     VOICE = "voice"
@@ -62,6 +65,13 @@ class Activation:
 #: гірше — за `D-038` платіжні посилання одноразові, тож «згадати» QR
 #: п'ятихвилинної давнини означає показати прострочений чужий рахунок.
 MAX_CRM_ACTIVATION_S = 300.0
+
+#: Анкета (D-065) — єдина активація, яку тримає не CRM, а людина: поки
+#: батько торкається форми, строк подовжується на `FORM_IDLE_S`, але не
+#: далі за `FORM_MAX_S` від відкриття. Чотири хвилини бездіяльності — і
+#: анкета зникає разом із введеним, навіть якщо зв'язку з CRM немає.
+FORM_IDLE_S = 240.0
+FORM_MAX_S = 1800.0
 
 
 class Coordinator:
@@ -168,6 +178,9 @@ class Coordinator:
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unknown_mode")
             if mode in self.unsupported:
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unsupported_mode")
+            if mode is ModeName.FORM:
+                # Анкету відкриває лише OPEN_FORM: там адреса й строки (D-065).
+                return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unsupported_mode")
             ttl = self._bounded_ttl(_ttl_from(cmd, at))
             ok = self.request(mode, Priority.CRM, ttl, cmd.command_id, at, cmd.payload)
             return CommandResult(
@@ -181,6 +194,33 @@ class Coordinator:
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, "empty_payload")
             ttl = self._bounded_ttl(_ttl_from(cmd, at) or 15.0)
             ok = self.request(ModeName.QR, Priority.CRM, ttl, cmd.command_id, at, cmd.payload)
+            return CommandResult(
+                cmd.command_id,
+                CommandStatus.ACCEPTED if ok else CommandStatus.REJECTED,
+                "" if ok else "preempted",
+            )
+
+        if cmd.kind is CommandKind.OPEN_FORM:
+            url = str(cmd.payload.get("url", ""))
+            if not url:
+                return CommandResult(cmd.command_id, CommandStatus.REJECTED, "empty_payload")
+            if ModeName.FORM in self.unsupported:
+                return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unsupported_mode")
+            idle = _ttl_from(cmd, at) or FORM_IDLE_S
+            idle = min(idle, FORM_IDLE_S)
+            raw_max = cmd.payload.get("max_ms")
+            limit = FORM_MAX_S
+            if isinstance(raw_max, (int, float)) and raw_max > 0:
+                limit = min(limit, float(raw_max) / 1000.0)
+            payload = {
+                "kind": "form",
+                "form": str(cmd.payload.get("kind", "enrollment")),
+                "url": url,
+                "title": str(cmd.payload.get("title") or "Анкета"),
+                "idle_s": idle,
+                "max_until": at + max(limit, idle),
+            }
+            ok = self.request(ModeName.FORM, Priority.CRM, idle, cmd.command_id, at, payload)
             return CommandResult(
                 cmd.command_id,
                 CommandStatus.ACCEPTED if ok else CommandStatus.REJECTED,
@@ -221,6 +261,17 @@ class Coordinator:
         return min(ttl, self._max_activation)
 
     # -- взаємодія користувача --------------------------------------------
+
+    def form_activity(self, at: float | None = None) -> bool:
+        """Людина ще заповнює анкету: продовжити строк, але не далі стелі."""
+        at = self._clock() if at is None else at
+        active = self._active
+        if active.mode is not ModeName.FORM or active.expired(at):
+            return False
+        idle = float(active.payload.get("idle_s", FORM_IDLE_S))
+        until = float(active.payload.get("max_until", at))
+        active.expires_at = min(at + idle, until)
+        return True
 
     def user_interaction(self, mode: ModeName, ttl: float = 20.0, at: float | None = None) -> bool:
         """Дотик користувача важливіший за фонову команду CRM."""

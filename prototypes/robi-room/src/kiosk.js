@@ -2,6 +2,7 @@ import { ContentTree, Navigation, readSnapshot } from './content.js';
 import { createContentScreen } from './menu.js';
 import { element, icon } from './icons.js';
 import { createBannerArt } from './banners.js';
+import { createFormScreen, WARN_BEFORE_MS } from './form.js';
 
 const $ = s => document.querySelector(s);
 
@@ -65,6 +66,15 @@ export function createKiosk({ pauseScene, mascot }) {
     // миті, коли його дала камера, а не на такті таймера сторінки.
     scannerFrame.src = `/media/scanner/stream.mjpg?v=${Date.now()}`;
   }
+  // Анкета з CRM (D-065): та сама сторінка CRM у фреймі, ми лише рамка навколо.
+  let lastFormActivity = 0;
+  const form = createFormScreen($('#screens'), { onClose: () => close(), onActivity: () => formActivity() });
+  function formActivity() {
+    const now = performance.now();
+    if (mode !== 'form' || now - lastFormActivity < 5000) return;
+    lastFormActivity = now;
+    command({ action: 'activity', token });
+  }
   let returnFocus = null;
   let returnNode = '', returnPage = 0, returnTimer;
 
@@ -80,6 +90,7 @@ export function createKiosk({ pauseScene, mascot }) {
       qr.hidden = true; qrCode.replaceChildren(); wifiDetails.hidden = true;
       wifiNetwork.textContent = ''; wifiPassword.textContent = '';
     }
+    if (next !== 'form') form.hide();
     if (next !== 'scanner') {
       scanner.hidden = true; scannerFrame.hidden = true; scannerFrame.removeAttribute('src');
       scannerResult.hidden = true; scannerValue.textContent = ''; clearTimeout(scannerRetry);
@@ -108,8 +119,12 @@ export function createKiosk({ pauseScene, mascot }) {
       updateScanner(display);
       scannerTitle.focus({ preventScroll: true });
     }
+    if (next === 'form') {
+      if (!form.show(display.url, display.title)) { next = 'home'; mode = 'home'; }
+      else lastFormActivity = 0;
+    }
     $('#home').inert = next !== 'home';
-    pauseScene(next === 'info' || next === 'qr' || next === 'scanner');
+    pauseScene(next === 'info' || next === 'qr' || next === 'scanner' || next === 'form');
     document.body.dataset.screen = mode;
     if (returning) {
       launcherPage = returnPage; renderLauncher();
@@ -278,7 +293,7 @@ export function createKiosk({ pauseScene, mascot }) {
     mascot(snapshot.mascot?.state ?? 'idle', snapshot.mascot?.gaze);
     const d = snapshot.display;
     if (d.token === dismissed) return;
-    const remoteMode = ['home', 'info', 'qr', 'scanner'].includes(d.mode) ? d.mode : 'home';
+    const remoteMode = ['home', 'info', 'qr', 'scanner', 'form'].includes(d.mode) ? d.mode : 'home';
     if (localOnly && mode !== 'home') return;
     deadline = d.remaining_s == null ? Infinity : performance.now() + Math.max(0, d.remaining_s * 1000 - elapsed);
     if (token !== d.token || mode !== remoteMode) {
@@ -296,7 +311,8 @@ export function createKiosk({ pauseScene, mascot }) {
   }
   function disconnected() {
     connected = false;
-    if (mode === 'qr' || mode === 'scanner') { dismissed = token; setMode('home'); }
+    // Без служби пристрою анкету ніхто не закриє за строком — закриваємо самі (D-049).
+    if (mode === 'qr' || mode === 'scanner' || mode === 'form') { dismissed = token; setMode('home'); }
   }
   let commandIdle = Promise.resolve();
   async function command(payload) {
@@ -413,6 +429,10 @@ export function createKiosk({ pauseScene, mascot }) {
     const now = performance.now(), dt = Math.min(300, now - tickAt); tickAt = now;
     expire();
     if (mode === 'qr') qrTimer.textContent = `Дані зникнуть через ${Math.max(0, Math.ceil((deadline - now) / 1000))} с`;
+    if (mode === 'form') {
+      const left = deadline - now;
+      if (left > 0 && left < WARN_BEFORE_MS) form.warn(Math.ceil(left / 1000)); else form.calm();
+    }
     syncBannerMotion();
     // Кнопок каруселі немає, тож банери гортаються самі завжди, і при
     // зменшеній анімації теж (тоді лише без переходу), інакше кіоск

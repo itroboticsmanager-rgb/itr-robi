@@ -11,8 +11,9 @@
 #   * guardian task every minute restarts the supervisor if it ever dies;
 #   * Ctrl+Alt+Del screen: no Task Manager, lock, sign out, password change or
 #     power - only "Switch user", which needs the robiadmin password;
-#   * Edge (for Robi only): only http://127.0.0.1:<port>/ and localhost,
-#     no downloads, file dialogs, printing or DevTools;
+#   * Edge (for Robi only): only http://127.0.0.1:<port>/, localhost and the
+#     -AllowOrigin sites (CRM enrollment form, D-065), no downloads, file
+#     dialogs, printing or DevTools;
 #   * no notifications, edge swipes, lock screen, widgets, tips, crash dialogs;
 #   * power / sleep buttons do nothing (a long 10 s press still forces off).
 #
@@ -26,6 +27,10 @@ param(
     [int]$Port = 4173,
     [Parameter(ParameterSetName = 'Install')]
     [switch]$Offline,
+    # Sites the kiosk Edge may open besides the local kiosk page. The CRM is
+    # needed for the enrollment form shown in a frame (D-065).
+    [Parameter(ParameterSetName = 'Install')]
+    [string[]]$AllowOrigin = @('https://crm.itrobotics.com.ua'),
     [Parameter(ParameterSetName = 'Install')]
     [switch]$SkipPolicies,
     # Keep explorer as Robi's shell (task-only autostart, softer lock).
@@ -214,6 +219,11 @@ if (-not $SkipPolicies) {
         Set-Str "$ue\URLBlocklist" '1' '*'
         Set-Str "$ue\URLAllowlist" '1' "http://127.0.0.1:$Port"
         Set-Str "$ue\URLAllowlist" '2' "http://localhost:$Port"
+        $n = 3
+        foreach ($o in $AllowOrigin) {
+            if ($o -match '^https://[A-Za-z0-9.-]+(:\d+)?$') { Set-Str "$ue\URLAllowlist" ([string]$n) $o; $n++ }
+            else { Say "warning: -AllowOrigin '$o' ignored (expected https://host)" }
+        }
         foreach ($p in @(
             @('DownloadRestrictions', 3), @('AllowFileSelectionDialogs', 0), @('PrintingEnabled', 0),
             @('DeveloperToolsAvailability', 2), @('BrowserSignin', 0), @('DefaultNotificationsSetting', 2),

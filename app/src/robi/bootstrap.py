@@ -452,6 +452,14 @@ class App:
         }
         if scanner_active:
             state["display"].update(kind="scanner", scanner=self.scanner.snapshot())
+        if active.mode is ModeName.FORM:
+            # Адреса анкети йде у браузер лише поки форма на екрані; у
+            # звичайному знімку її немає (D-049).
+            url = str(active.payload.get("url", ""))
+            state["display"].update(
+                kind="form", form=str(active.payload.get("form", "")),
+                url=url if self.policy.check(url).ok else "",
+            )
         if active.payload.get("kind") == "wifi":
             # The key exists only while the visitor's fixed-duration screen is
             # active. It is never part of the ordinary home snapshot.
@@ -534,7 +542,18 @@ class App:
         action = payload.get("action")
         active = self.coordinator.active
         token = self._web_snapshot().get("display", {}).get("token")
-        if action in ("close", "activity", "scanner_again"):
+        if action in ("close", "activity") and active.mode is ModeName.FORM:
+            # Анкету відкрила CRM, але тримає її людина біля планшета:
+            # дотик подовжує строк, «Скасувати» чи «Готово» закривають (D-065).
+            if payload.get("token") != token or active is not self._web_bridge.activation:
+                return {"ok": False, "reason": "stale"}
+            if active.expired(self.clock_fn()):
+                return {"ok": False, "reason": "preempted"}
+            if action == "close":
+                self.coordinator.release()
+            else:
+                self.coordinator.form_activity(self.clock_fn())
+        elif action in ("close", "activity", "scanner_again"):
             if payload.get("token") != token or active is not self._web_bridge.activation:
                 return {"ok": False, "reason": "stale"}
             if active.priority > Priority.USER or active.expired(self.clock_fn()):
@@ -811,6 +830,14 @@ class App:
             cmd.kind is CommandKind.SET_MODE and cmd.payload.get("mode") == "qr"
         ):
             verdict = self.policy.check(str(cmd.payload.get("value", "")))
+            if not verdict.ok:
+                return CommandResult(cmd.command_id, CommandStatus.REJECTED, verdict.reason)
+        if cmd.kind is CommandKind.OPEN_FORM:
+            # Анкета (D-065) живе лише у веб-кіоску; адреса — той самий
+            # allowlist, що й для QR (D-038), бо її відкриває браузер пристрою.
+            if not self.config.web.enabled:
+                return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unsupported_mode")
+            verdict = self.policy.check(str(cmd.payload.get("url", "")))
             if not verdict.ok:
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, verdict.reason)
         if cmd.kind is CommandKind.SET_MODE and cmd.payload.get("mode") == "info":
