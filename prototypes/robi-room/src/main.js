@@ -57,7 +57,8 @@ function frame(now) {
   stage.update(dt); stage.render();
   attention(stage.attentionTarget);
   const bounds = stage.characterBounds();
-  document.documentElement.classList.toggle('mascot-present', !!bounds && !reduced);
+  // Робі сидить на вивісці постійно, тож карусель чекає лише його «виступу».
+  document.documentElement.classList.toggle('mascot-present', !!bounds && !reduced && stage.performing);
   // A real target over the character only. The logo cannot expand or navigate.
   sensor.hidden = !bounds || reduced;
   if (bounds && !reduced) {
@@ -86,7 +87,7 @@ canvas.addEventListener('webglcontextlost', e => {
 });
 canvas.addEventListener('webglcontextrestored', () => location.reload());
 try {
-  stage = createLogoStage(canvas, { reduced });
+  stage = createLogoStage(canvas, { reduced, onReady: () => { last = 0; if (reduced && stage) stage.render(); wake(); } });
   stage.resize($('#stage').clientWidth, $('#stage').clientHeight);
   $('#logo-fallback').hidden = true;
 } catch (error) { console.error('Logo stage unavailable', error); }

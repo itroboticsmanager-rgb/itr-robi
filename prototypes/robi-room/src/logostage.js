@@ -6,9 +6,15 @@ import { createStageCamera, fitStageCamera } from './stage-camera.js';
 import { createRobot, poseRobot } from './robot.js';
 import { MotionController } from './motion.js';
 import { CameoDirector, cameoPlacement, cameoPose } from './cameo.js';
+import { SitDirector, restPose } from './sit.js';
+import { loadRobiModel } from './robi-model.js';
 
 const SIGN_WIDTH = 6, ROBOT_Z = .8;
-export function createLogoStage(canvas, { theme = 'dark', reduced = false } = {}) {
+/** Ріст Робі (повна модель) у висотах вивіски; SIT_SINK — наскільки сидіння нижче кульшового шарніра (у рості). */
+const SIT_HEIGHT = .7, SIT_SINK = .03;
+/** Скільки висот вивіски вміщує кадр, коли Робі сидить, і де тоді центр вивіски (у півкадрах). */
+const SIT_ROOM = 1.3, SIT_LOGO_Y = -.13;
+export function createLogoStage(canvas, { theme = 'dark', reduced = false, onReady = null, model = true } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
@@ -51,7 +57,17 @@ export function createLogoStage(canvas, { theme = 'dark', reduced = false } = {}
   const robot = createRobot(); robot.root.visible = false; scene.add(robot.root);
   robot.root.traverse(node => { if (node.isMesh) node.castShadow = true; });
   const span = new THREE.Box3().setFromObject(robot.root).getSize(new THREE.Vector3()).y;
-  const controller = new MotionController(), director = new CameoDirector();
+  const controller = new MotionController(), cameoDirector = new CameoDirector();
+  // «Живе на вивісці» (D-066): Робі з Tripo постійно сидить на кінці рядка під
+  // назвою. Поки модель вантажиться або якщо не завантажилась — старий Робі
+  // визирає, як раніше.
+  const sit = new SitDirector();
+  let sitter = null;
+  if (model) loadRobiModel().then(m => {
+    sitter = m; scene.add(m.root); cameoDirector.reset(); robot.root.visible = false; onStage = null;
+    resize(width, height); m.applyPose(restPose()); onReady?.();
+  }).catch(error => console.warn('Robi model unavailable, keeping the cameo', error));
+  const activeDirector = () => (sitter ? sit : cameoDirector);
   const ambient = new THREE.HemisphereLight('#e1efff', '#183557', 1.2);
   const key = new THREE.DirectionalLight('#fff0d9', 2.5); key.position.set(-3, 4, 8);
   key.castShadow = true; key.shadow.mapSize.set(1024, 1024);
@@ -80,12 +96,27 @@ export function createLogoStage(canvas, { theme = 'dark', reduced = false } = {}
   function resize(w, h) {
     if (!w || !h) return;
     width = w; height = h; renderer.setSize(w, h, false);
-    Object.assign(frame, fitStageCamera(camera,w,h,SIGN_WIDTH,logo.userData.height));
+    // Робі сидить на «s» — над вивіскою треба місце для нього.
+    Object.assign(frame, fitStageCamera(camera,w,h,SIGN_WIDTH,logo.userData.height * (sitter ? SIT_ROOM : 1)));
     frame.height = Math.min(frame.halfHeight * 2 * .78, frame.halfWidth * .48); frame.scale = frame.height / span;
     frame.signTop = logo.userData.height / 2;
     robot.root.scale.setScalar(frame.scale);
     wall.scale.set(frame.halfWidth * 2, frame.halfHeight * 2, 1); shadowWall.scale.copy(wall.scale);
-    logo.position.y = frame.halfHeight * .07;
+    logo.position.y = frame.halfHeight * (sitter ? SIT_LOGO_Y : .07);
+    placeSitter();
+  }
+  const seatBox = new THREE.Box3();
+  function placeSitter() {
+    if (!sitter || !width) return;
+    logo.updateMatrixWorld(true);
+    // Сидить на верхньому краю останньої літери «s», ноги звисають перед нею.
+    const letter = logo.userData.components.s?.pivot;
+    seatBox.setFromObject(letter ?? logo);
+    const scale = logo.userData.height * SIT_HEIGHT;
+    sitter.root.scale.setScalar(scale);
+    const x = letter ? (seatBox.min.x + seatBox.max.x) / 2 : seatBox.max.x;
+    sitter.root.position.set(x, seatBox.max.y - (sitter.seatY - SIT_SINK) * scale, ROBOT_Z);
+    sitter.root.rotation.set(0, -.18, 0);
   }
   function update(dt) {
     if (reduced) return false;
@@ -95,7 +126,13 @@ export function createLogoStage(canvas, { theme = 'dark', reduced = false } = {}
     sweep.position.x = Math.sin(clock * .24 - 1) * 5;
     sweep.intensity = 12 + 7 * Math.sin(clock * .24) ** 2;
     animateLogo(logo, clock, clock - flourishAt);
-    const cameo = director.update(dt);
+    if (sitter) {
+      const pose = sit.update(dt, { present: !!gaze, gaze });
+      if (['happy', 'success', 'achievement'].includes(emotion)) pose.smile = Math.max(pose.smile, .55);
+      sitter.applyPose(pose);
+      return true;
+    }
+    const cameo = cameoDirector.update(dt);
     onStage = cameo;
     robot.root.visible = !!cameo;
     if (cameo) {
@@ -121,7 +158,25 @@ export function createLogoStage(canvas, { theme = 'dark', reduced = false } = {}
     return true;
   }
   const box = new THREE.Box3(), point = new THREE.Vector3();
+  const corners = [];
+  function sitterBounds() {
+    sitter.root.updateMatrixWorld(true);
+    corners.length = 0;
+    box.setFromObject(sitter.face);
+    corners.push(box.min.clone(), box.max.clone());
+    for (const name of ['antenna', 'handL', 'handR', 'footL', 'footR', 'root']) corners.push(sitter.bones[name].getWorldPosition(new THREE.Vector3()));
+    let left = width, right = 0, top = height, bottom = 0;
+    for (const c of corners) {
+      c.project(camera);
+      const px = (c.x + 1) * width / 2, py = (1 - c.y) * height / 2;
+      left = Math.min(left, px); right = Math.max(right, px); top = Math.min(top, py); bottom = Math.max(bottom, py);
+    }
+    const pad = (right - left) * .12;
+    left = Math.max(0, left - pad); right = Math.min(width, right + pad); top = Math.max(0, top - pad); bottom = Math.min(height, bottom + pad);
+    return right > left && bottom - top > 20 ? { x: left, y: top, width: right - left, height: bottom - top } : null;
+  }
   function characterBounds() {
+    if (sitter) return reduced ? null : sitterBounds();
     if (!onStage || !robot.root.visible || reduced) return null;
     robot.root.updateMatrixWorld(true); box.setFromObject(robot.head);
     let left = width, right = 0, top = height, bottom = 0;
@@ -136,19 +191,23 @@ export function createLogoStage(canvas, { theme = 'dark', reduced = false } = {}
   function touch(x, y) {
     const b = characterBounds(), r = canvas.getBoundingClientRect();
     if (!b || x-r.left < b.x || x-r.left > b.x+b.width || y-r.top < b.y || y-r.top > b.y+b.height) return false;
-    return director.greet();
+    return activeDirector().greet();
   }
   function dispose() {
     const geometries = new Set(), materials = new Set();
     scene.traverse(o => { if (o.geometry) geometries.add(o.geometry); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => materials.add(m)); });
     geometries.forEach(g => g.dispose()); materials.forEach(m => m.dispose()); environment.dispose(); renderer.dispose();
   }
-  return { renderer, scene, camera, logo, robot, director, frame, resize, update, characterBounds, touch, dispose, setTheme,
+  return { renderer, scene, camera, logo, robot, frame,
+    get director() { return activeDirector(); },
+    /** Помітна дія Робі: поки триває, карусель банерів чекає. */
+    get performing() { return !reduced && (sitter ? sit.performing : !!onStage); },
+    resize, update, characterBounds, touch, dispose, setTheme,
     setPageTargets(targets) { pageTargets = targets; },
     get attentionTarget() { return !reduced && onStage?.kind === 'guide' && onStage.greeted < 0 && onStage.t > 4.4 && onStage.t < 8.3 ? aimFor(onStage.target) : ''; },
     render: () => renderer.render(scene, camera), sweepNow: () => { if (clock - flourishAt > 8) flourishAt = clock; },
     setMascot(state, nextGaze) { emotion = state; gaze = Array.isArray(nextGaze) && nextGaze.length === 2 && nextGaze.every(Number.isFinite) ? nextGaze.map(v => THREE.MathUtils.clamp(v, -1, 1)) : null; },
-    set reduced(value) { reduced = value; if (value) { robot.root.visible = false; onStage = null; director.reset(); } },
+    set reduced(value) { reduced = value; if (value) { robot.root.visible = false; onStage = null; cameoDirector.reset(); sit.reset(); sitter?.applyPose(restPose()); } },
     get reduced() { return reduced; },
   };
 }
