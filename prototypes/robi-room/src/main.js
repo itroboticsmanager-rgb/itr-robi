@@ -12,6 +12,8 @@ let stage, raf = 0, last = 0, paused = false, visible = true;
 const debug = new URLSearchParams(location.search).has('debug');
 const diagnostics = debug ? document.createElement('output') : null;
 if (diagnostics) { diagnostics.hidden = true; diagnostics.id = 'robi-diagnostics'; document.body.append(diagnostics); }
+// Як у logo-preview: автоматизація бачить сцену лише під ?debug.
+if (debug) globalThis.__robiStage = () => stage;
 let frames = 0, since = 0;
 const pageTargets = { banner: $('#banner-slides'), menu: $('#launcher') };
 function attention(target = '') {

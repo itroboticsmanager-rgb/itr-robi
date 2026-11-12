@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SitDirector, AWAY_S, GREET_COOLDOWN_S, WAVE_S, FLOURISH_MAX_S } from '../src/sit.js';
+import { SitDirector, AWAY_S, GREET_COOLDOWN_S, WAVE_S, FLOURISH_MAX_S, VISIT_S, VISIT_AFTER_S, VISIT_COOLDOWN_S, BUMP_S } from '../src/sit.js';
 
 const run = (d, seconds, opts) => { for (let t = 0; t < seconds; t += .05) d.update(.05, opts); };
 const near = { present: true, gaze: [.3, 0] };
@@ -41,7 +41,7 @@ test('touch greets, reset stops the action', () => {
   const d = new SitDirector(() => .5);
   assert.equal(d.greet(), true);
   assert.equal(d.greet(), false, 'no restart mid-wave');
-  run(d, 1);
+  d.force("wave"); run(d, 1);
   assert.ok(d.pose().arms[1].raise > 1);
   d.reset();
   assert.equal(d.performing, false);
@@ -55,4 +55,32 @@ test('idle pose stays small and calm', () => {
     if (d.performing) continue;
     assert.ok(Math.abs(p.headYaw) < .2 && Math.abs(p.legs[0].swing) <= .1 && p.arms[0].raise === 0);
   }
+});
+
+test('a person who stays gets a visit: off the letter, to the camera, waves, back', () => {
+  const d = new SitDirector(() => .5);
+  run(d, WAVE_S + .2, near);
+  run(d, VISIT_AFTER_S - WAVE_S, near);
+  assert.equal(d.kind, 'visit');
+  let maxTravel = 0, waved = false, smiled = 0;
+  for (let t = 0; t < VISIT_S; t += .05) {
+    const p = d.update(.05, near);
+    maxTravel = Math.max(maxTravel, p.travel);
+    if (p.travel > .99 && p.arms[1].raise > 1.4) { waved = true; smiled = Math.max(smiled, p.smile); }
+  }
+  assert.ok(maxTravel > .99 && waved && smiled > .8);
+  const after = d.update(.05, near);
+  assert.equal(after.travel, 0); assert.equal(after.sit, 1);
+  run(d, 60, near);
+  assert.notEqual(d.kind, 'visit', 'not again within the cooldown');
+  assert.ok(VISIT_COOLDOWN_S > 60);
+});
+
+test('the bouncing letter lifts him and makes him smile', () => {
+  const d = new SitDirector(() => .5);
+  assert.equal(d.bump(), true);
+  let hop = 0, smile = 0;
+  for (let t = 0; t < BUMP_S; t += .05) { const p = d.update(.05); hop = Math.max(hop, p.hop); smile = Math.max(smile, p.smile); }
+  assert.ok(hop > .05 && smile > .6);
+  assert.equal(d.performing, false, 'a bounce does not stop the banners');
 });

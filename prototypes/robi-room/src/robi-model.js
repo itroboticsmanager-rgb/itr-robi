@@ -72,15 +72,16 @@ function buildRobi(scene) {
 
   function applyPose(p) {
     for (const name of BONES) pending[name] = new THREE.Quaternion();
-    // Сидить: стегна вперед, гомілки звисають з краю.
-    turn('spine', X, -.07 + .025 * p.breathe);
+    // Сидить (sit 1): стегна вперед, гомілки звисають з краю; стоїть (sit 0): ноги прямі.
+    const sit = p.sit ?? 1;
+    turn('spine', X, -.07 * sit + .025 * p.breathe + (p.lean ?? 0));
     turn('neck', X, -.012 * p.breathe);
     for (const [i, side] of [[0, 'L'], [1, 'R']]) {
       const sign = side === 'L' ? 1 : -1, leg = p.legs[i], arm = p.arms[i];
-      turn('thigh' + side, X, -1.48);
-      turn('thigh' + side, Z, sign * .05);
-      turn('shin' + side, X, 1.48 + leg.swing);
-      turn('foot' + side, X, -.15);
+      turn('thigh' + side, X, -1.48 * sit + (leg.thigh ?? 0));
+      turn('thigh' + side, Z, sign * .05 * sit);
+      turn('shin' + side, X, 1.48 * sit + leg.swing);
+      turn('foot' + side, X, -.15 * sit);
       // Плече бере третину підйому, рука — решту.
       // A-поза моделі тримає руки розведеними; сидячи вони ближче до тіла.
       turn('shoulder' + side, Z, sign * arm.raise * .3);
@@ -98,5 +99,5 @@ function buildRobi(scene) {
     updateScreen(material, p);
   }
 
-  return { root, bones, face, applyPose, height: 1, seatY: SEAT_Y };
+  return { root, bones, face, applyPose, height: 1, seatY: SEAT_Y, faceY: SCREEN.y };
 }

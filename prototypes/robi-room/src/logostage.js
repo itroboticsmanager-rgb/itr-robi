@@ -14,6 +14,8 @@ const SIGN_WIDTH = 6, ROBOT_Z = .8;
 const SIT_HEIGHT = .7, SIT_SINK = .03;
 /** Скільки висот вивіски вміщує кадр, коли Робі сидить, і де тоді центр вивіски (у півкадрах). */
 const SIT_ROOM = 1.3, SIT_LOGO_Y = -.13;
+/** Візит: ріст біля камери (у висотах кадру), наскільки він ближче, і підйом стегон стоячи (у рості). */
+const NEAR_HEIGHT = 1.45, NEAR_Z = 2.5, STAND_LIFT = .2;
 export function createLogoStage(canvas, { theme = 'dark', reduced = false, onReady = null, model = true } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -106,17 +108,46 @@ export function createLogoStage(canvas, { theme = 'dark', reduced = false, onRea
     placeSitter();
   }
   const seatBox = new THREE.Box3();
+  // Дві точки шляху: на літері «s» і близько до камери (візит). Між ними —
+  // `travel` з пози: масштаб росте показниково, як у наближенні.
+  const seat = { x: 0, y: 0, scale: 1 }, near = { x: 0, y: 0, scale: 1 };
+  let lastLift = 0;
   function placeSitter() {
     if (!sitter || !width) return;
-    logo.updateMatrixWorld(true);
     // Сидить на верхньому краю останньої літери «s», ноги звисають перед нею.
-    const letter = logo.userData.components.s?.pivot;
-    seatBox.setFromObject(letter ?? logo);
-    const scale = logo.userData.height * SIT_HEIGHT;
+    // Міряємо літеру в спокої, навіть якщо вона саме підстрибнула.
+    const letter = logo.userData.components.s;
+    const was = letter?.pivot.position.clone();
+    letter?.pivot.position.copy(letter.home);
+    logo.updateMatrixWorld(true);
+    seatBox.setFromObject(letter?.pivot ?? logo);
+    if (letter) { letter.pivot.position.copy(was); logo.updateMatrixWorld(true); }
+    seat.scale = logo.userData.height * SIT_HEIGHT;
+    seat.x = letter ? (seatBox.min.x + seatBox.max.x) / 2 : seatBox.max.x;
+    seat.y = seatBox.max.y - (sitter.seatY - SIT_SINK) * seat.scale;
+    // Біля камери Робі вищий за кадр: обличчя трохи вище середини, ноги
+    // за нижнім краєм, як у людини, що підійшла впритул.
+    near.scale = frame.halfHeight * 2 * NEAR_HEIGHT;
+    near.x = seat.x * .62;
+    near.y = -frame.halfHeight * .06 - sitter.faceY * near.scale;
+    placeAt(restPose());
+  }
+  function placeAt(pose, ride = 0) {
+    const t = pose.travel ?? 0, k = t * t * (3 - 2 * t);
+    const scale = seat.scale * (near.scale / seat.scale) ** t;
+    // Стоячи стегна вище, ніж сидячи на краю: ноги випрямились.
+    const stand = (1 - (pose.sit ?? 1)) * (1 - k) * STAND_LIFT * scale;
     sitter.root.scale.setScalar(scale);
-    const x = letter ? (seatBox.min.x + seatBox.max.x) / 2 : seatBox.max.x;
-    sitter.root.position.set(x, seatBox.max.y - (sitter.seatY - SIT_SINK) * scale, ROBOT_Z);
-    sitter.root.rotation.set(0, -.18, 0);
+    sitter.root.position.set(seat.x + (near.x - seat.x) * k,
+      seat.y + (near.y - seat.y) * k + stand + (pose.hop ?? 0) * scale + ride * (1 - k),
+      ROBOT_Z + NEAR_Z * k);
+    sitter.root.rotation.set(0, -.18 * (1 - k) + (pose.yaw ?? 0), 0);
+  }
+  /** Наскільки зараз піднята «s» (світові одиниці) і чи вона саме злітає. */
+  function letterLift() {
+    const c = logo.userData.components.s;
+    if (!c) return 0;
+    return (c.pivot.position.y - c.home.y) * logo.children[0].scale.y;
   }
   function update(dt) {
     if (reduced) return false;
@@ -127,9 +158,14 @@ export function createLogoStage(canvas, { theme = 'dark', reduced = false, onRea
     sweep.intensity = 12 + 7 * Math.sin(clock * .24) ** 2;
     animateLogo(logo, clock, clock - flourishAt);
     if (sitter) {
+      // Літера «s» під ним підстрибує — він їде разом із нею і реагує.
+      const lift = letterLift();
+      if (lift > seat.scale * .012 && lastLift <= seat.scale * .012) sit.bump();
+      lastLift = lift;
       const pose = sit.update(dt, { present: !!gaze, gaze });
       if (['happy', 'success', 'achievement'].includes(emotion)) pose.smile = Math.max(pose.smile, .55);
       sitter.applyPose(pose);
+      placeAt(pose, lift);
       return true;
     }
     const cameo = cameoDirector.update(dt);
@@ -207,7 +243,7 @@ export function createLogoStage(canvas, { theme = 'dark', reduced = false, onRea
     get attentionTarget() { return !reduced && onStage?.kind === 'guide' && onStage.greeted < 0 && onStage.t > 4.4 && onStage.t < 8.3 ? aimFor(onStage.target) : ''; },
     render: () => renderer.render(scene, camera), sweepNow: () => { if (clock - flourishAt > 8) flourishAt = clock; },
     setMascot(state, nextGaze) { emotion = state; gaze = Array.isArray(nextGaze) && nextGaze.length === 2 && nextGaze.every(Number.isFinite) ? nextGaze.map(v => THREE.MathUtils.clamp(v, -1, 1)) : null; },
-    set reduced(value) { reduced = value; if (value) { robot.root.visible = false; onStage = null; cameoDirector.reset(); sit.reset(); sitter?.applyPose(restPose()); } },
+    set reduced(value) { reduced = value; if (value) { robot.root.visible = false; onStage = null; cameoDirector.reset(); sit.reset(); if (sitter) { sitter.applyPose(restPose()); placeAt(restPose()); } } },
     get reduced() { return reduced; },
   };
 }
