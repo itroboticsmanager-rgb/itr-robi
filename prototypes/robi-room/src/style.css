@@ -65,7 +65,7 @@
 /* Напрями й курси (D-063). Колір напряму приходить із контенту як --accent:
    тонує поверхні, знак і бейдж, а текст лишається темним — стан не тримається
    на кольорі, і жовтий напрям читається так само, як синій. */
-.content-item,.course-list,.course-item,.course-page,.pathway-hero,.pathway-gallery{--tone:var(--accent,var(--blue));--tone-ink:color-mix(in oklch,var(--tone) 58%,var(--ink))}
+.content-item,.course-page,.pathway-page,.pw-step{--tone:var(--accent,var(--blue));--tone-ink:color-mix(in oklch,var(--tone) 58%,var(--ink))}
 .content-head{flex-shrink:0}
 .content-screen[data-page=pathway] .content-bar,.content-screen[data-page=course] .content-bar{margin-bottom:20px}
 @keyframes rise{from{opacity:0;transform:translateY(16px) scale(.985)}}
@@ -93,52 +93,17 @@
 .tile-go svg{width:20px;height:20px;stroke-width:2.2}
 @media(hover:hover){.content-item:hover{border-color:color-mix(in oklch,var(--tone) 45%,var(--line));box-shadow:0 2px 4px oklch(31% .07 255 / .05),0 18px 36px -18px color-mix(in oklch,var(--tone) 75%,transparent)}.content-item:hover .tile-go{transform:translateX(3px)}}
 
-/* Шапка напряму: його колір, великий знак, опис. */
-.pathway-hero{position:relative;isolation:isolate;overflow:hidden;display:grid;grid-template-columns:auto minmax(0,1fr);gap:28px;align-items:start;padding:30px 36px;border:1px solid color-mix(in oklch,var(--tone) 22%,var(--line));border-radius:30px;background:radial-gradient(120% 140% at 0% 0%,color-mix(in oklch,var(--tone) 24%,var(--paper)) 0%,color-mix(in oklch,var(--tone) 8%,var(--paper)) 55%,var(--paper) 100%);animation:rise .5s var(--ease) backwards}
-.hero-mark{position:absolute;right:-40px;top:-50px;z-index:-1;color:var(--tone);opacity:.12;transform:rotate(-14deg);pointer-events:none}
-.hero-mark svg{width:300px;height:300px;stroke-width:1.2}
 .hero-badge{display:grid;place-items:center;width:84px;height:84px;border-radius:26px;background:var(--tone);color:#fff;box-shadow:0 14px 28px -10px color-mix(in oklch,var(--tone) 80%,transparent),inset 0 1px 0 oklch(100% 0 0 / .25)}
 .hero-badge svg{width:44px;height:44px;stroke-width:1.8}
-.hero-copy{min-width:0}
-.hero-copy .section-kicker,.course-info .section-kicker{color:var(--tone-ink);margin-bottom:8px}
-.hero-copy .content-title{margin:0}
-.pathway-hero .pathway-intro{margin:14px 0 0;max-width:68ch;font-size:1.1rem;line-height:1.6;color:color-mix(in oklch,var(--ink) 80%,var(--paper))}
+.course-info .section-kicker{color:var(--tone-ink);margin-bottom:8px}
+.gallery-thumb:has(.is-broken),.mosaic-item:has(.is-broken){display:none}
 .section-title{display:flex;align-items:center;gap:10px;margin:30px 2px 14px;font-size:1.15rem;font-weight:700;letter-spacing:-.015em}
 .section-title svg{width:22px;height:22px;color:var(--tone,var(--blue));stroke-width:2}
 
-/* Стрічка фото й відео напряму: вертикальні відео стоять вертикально. */
-.media-reel{display:flex;gap:14px;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;padding:4px 2px 12px;scrollbar-width:none}
-.media-reel::-webkit-scrollbar{display:none}
-.reel-item{flex:none;padding:0;border:0;background:none;border-radius:20px;scroll-snap-align:start;animation:rise .5s var(--ease) backwards;animation-delay:calc(var(--i,0) * 50ms)}
-.reel-item:has(.is-broken),.gallery-thumb:has(.is-broken){display:none}
-.reel-frame{position:relative;display:block;height:clamp(200px,34vh,320px);border-radius:20px;overflow:hidden;background:color-mix(in oklch,var(--tone) 12%,var(--paper));box-shadow:0 10px 24px -16px oklch(25% .05 255 / .5)}
-.reel-frame.is-image{aspect-ratio:4/3}
-.reel-frame.is-video{aspect-ratio:9/16}
 .thumb-media{display:block;width:100%;height:100%;object-fit:cover}
 .play-badge{position:absolute;left:50%;top:50%;display:grid;place-items:center;width:58px;height:58px;border-radius:50%;transform:translate(-50%,-50%);background:oklch(100% 0 0 / .88);color:var(--ink);box-shadow:0 6px 18px oklch(15% .03 255 / .35);pointer-events:none}
 .play-badge svg{width:26px;height:26px;margin-left:3px;fill:currentColor;stroke-width:1.5}
 
-/* Курси напряму: картки з обкладинкою; один курс — широка картка. */
-.course-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px;padding-bottom:6px}
-.course-list[data-count="1"]{grid-template-columns:1fr}
-.course-item{position:relative;display:flex;flex-direction:column;padding:0;border:1px solid var(--line);border-radius:24px;overflow:hidden;background:var(--paper);color:var(--ink);text-align:left;box-shadow:0 1px 2px oklch(31% .07 255 / .04),0 14px 28px -22px oklch(25% .05 255 / .45);animation:rise .5s var(--ease) backwards;animation-delay:calc(120ms + var(--i,0) * 60ms);transition:transform .18s var(--ease),box-shadow .18s}
-.course-item:active:not(:disabled){transform:scale(.985)}
-.course-list[data-count="1"] .course-item{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr)}
-.course-cover{position:relative;display:grid;place-items:center;aspect-ratio:16/10;overflow:hidden;background:radial-gradient(120% 100% at 20% 15%,color-mix(in oklch,var(--tone) 26%,var(--paper)),color-mix(in oklch,var(--tone) 8%,var(--paper)));color:var(--tone)}
-.course-list[data-count="1"] .course-cover{aspect-ratio:auto;min-height:260px}
-.course-cover-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.cover-art svg{width:72px;height:72px;stroke-width:1.4}
-.cover-tag{position:absolute;left:14px;bottom:14px;display:inline-flex;align-items:center;gap:8px;padding:7px 13px 7px 10px;border-radius:999px;background:oklch(18% .03 255 / .72);color:#fff;font-size:.82rem;font-weight:600;backdrop-filter:blur(6px)}
-.cover-tag svg{width:16px;height:16px;stroke-width:2}
-.course-copy{display:flex;flex-direction:column;gap:8px;flex:1;min-width:0;padding:20px 22px}
-.course-list[data-count="1"] .course-copy{justify-content:center;gap:12px;padding:32px 36px}
-.course-copy strong{font-size:1.3rem;font-weight:700;line-height:1.22;letter-spacing:-.02em;overflow-wrap:anywhere}
-.course-list[data-count="1"] .course-copy strong{font-size:1.7rem}
-.course-meta{font-size:.95rem;color:var(--muted)}
-.course-foot{display:flex;align-items:center;gap:12px;margin-top:auto;padding-top:10px}
-.course-price{padding:9px 14px;border-radius:12px;background:oklch(95% .05 85);color:oklch(37% .07 65);font-weight:650;font-size:.95rem;line-height:1.3}
-.course-go{display:grid;place-items:center;flex:none;width:44px;height:44px;margin-left:auto;border-radius:50%;background:var(--tone);color:#fff}
-.course-go svg{width:20px;height:20px;stroke-width:2.2}
 
 /* Сторінка курсу: сцена галереї зліва, опис справа. */
 .course-page{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:44px;align-items:start}
@@ -179,7 +144,6 @@
 .course-highlights ul{display:grid;gap:12px;margin:0;padding:0;list-style:none}
 .course-highlights li{display:flex;align-items:flex-start;gap:12px;font-size:1.08rem;line-height:1.45;overflow-wrap:anywhere}
 .course-highlights svg{width:26px;height:26px;padding:5px;border-radius:50%;background:color-mix(in oklch,var(--tone) 16%,var(--paper));color:var(--tone);stroke-width:2.4}
-.pathway-intro{white-space:pre-line;overflow-wrap:anywhere}
 .price-row{display:flex;flex-wrap:wrap;align-items:center;gap:14px 20px;margin-top:8px}
 .price-note{max-width:30ch;margin:0;font-size:.9rem;line-height:1.45;color:var(--muted)}
 .course-page .content-price{font-size:1.3rem}
@@ -208,8 +172,8 @@ video.lightbox-media{height:100%}
 .lightbox.is-video .lightbox-sound{display:inline-flex}
 @media(hover:hover){.lightbox button:hover{background:oklch(100% 0 0 / .2)}}
 
-@media(min-width:1500px){.content-item{min-height:230px}.reel-frame{height:clamp(240px,34vh,380px)}.thumb-frame{height:92px}}
-@media(max-width:700px){.content-grid{grid-auto-rows:minmax(150px,auto)}.content-item{min-height:150px;padding:18px;gap:14px;border-radius:20px}.tile-badge{width:48px;height:48px;border-radius:15px}.tile-badge svg{width:26px;height:26px}.tile-go{top:14px;right:14px;width:34px;height:34px}.content-item .item-label{font-size:1.05rem}.content-item.has-photo .tile-copy{max-width:100%}.tile-photo{opacity:.35}.pathway-hero{grid-template-columns:1fr;gap:16px;padding:22px}.hero-badge{width:60px;height:60px;border-radius:18px}.hero-badge svg{width:32px;height:32px}.course-list[data-count="1"] .course-item{grid-template-columns:1fr}.course-list[data-count="1"] .course-cover{min-height:0;aspect-ratio:16/10}.course-list[data-count="1"] .course-copy{padding:20px}.course-page{grid-template-columns:1fr;gap:24px}.course-visual{position:static}.gallery{height:auto}.gallery-stage{height:58vh}.lightbox-frame{inset:88px 8px 100px}.lightbox-nav{top:auto;bottom:22px;width:56px;height:56px;margin:0}.lightbox-nav.prev{left:12px}.lightbox-nav.next{right:12px}.lightbox-progress{width:80px}.lightbox-close{top:14px;right:14px}}
+@media(min-width:1500px){.content-item{min-height:230px}.thumb-frame{height:92px}}
+@media(max-width:700px){.content-grid{grid-auto-rows:minmax(150px,auto)}.content-item{min-height:150px;padding:18px;gap:14px;border-radius:20px}.tile-badge{width:48px;height:48px;border-radius:15px}.tile-badge svg{width:26px;height:26px}.tile-go{top:14px;right:14px;width:34px;height:34px}.content-item .item-label{font-size:1.05rem}.content-item.has-photo .tile-copy{max-width:100%}.tile-photo{opacity:.35}.hero-badge{width:60px;height:60px;border-radius:18px}.hero-badge svg{width:32px;height:32px}.course-page{grid-template-columns:1fr;gap:24px}.course-visual{position:static}.gallery{height:auto}.gallery-stage{height:58vh}.lightbox-frame{inset:88px 8px 100px}.lightbox-nav{top:auto;bottom:22px;width:56px;height:56px;margin:0}.lightbox-nav.prev{left:12px}.lightbox-nav.next{right:12px}.lightbox-progress{width:80px}.lightbox-close{top:14px;right:14px}}
 /* D-064: no swipe-back / pull-to-refresh gestures on the kiosk tablet. */
 html,body{overscroll-behavior:none}
 /* D-065: анкета з CRM у фреймі. Смуга згори як в інших екранах, фрейм на весь простір. */

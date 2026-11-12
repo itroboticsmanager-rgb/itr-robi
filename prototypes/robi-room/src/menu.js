@@ -1,5 +1,6 @@
 import { element, icon } from './icons.js';
-import { createLightbox, createReel, createStage, mediaOf, mediaSummary, reducedMotion } from './gallery.js';
+import './pathway.css';
+import { createLightbox, createMosaic, createStage, mediaOf, mediaSummary, reducedMotion } from './gallery.js';
 
 // Колір напряму чи курсу приходить з CRM і вже перевірений на пристрої, але
 // в CSS-змінну він іде лише як `#rrggbb` — удруге перевірити дешевше, ніж
@@ -31,6 +32,18 @@ export function ageLabel(min, max) {
 
 export function durationLabel(months) {
   return Number.isInteger(months) && months > 0 ? `${months} ${plural(months, 'місяць', 'місяці', 'місяців')}` : '';
+}
+
+/**
+ * Перше речення опису — крупний підзаголовок, решта — звичайний текст.
+ * Коротке чи єдине речення лишається підзаголовком цілком.
+ */
+export function splitLead(text) {
+  const clean = String(text ?? '').trim();
+  if (!clean) return { lead: '', rest: '' };
+  const match = clean.match(/^(.{30,220}?[.!?…])\s+(\S[\s\S]*)$/);
+  if (!match) return clean.length <= 220 ? { lead: clean, rest: '' } : { lead: '', rest: clean };
+  return { lead: match[1], rest: match[2] };
 }
 
 export const coursesLabel = n => `${n} ${plural(n, 'курс', 'курси', 'курсів')}`;
@@ -130,65 +143,169 @@ export function createContentScreen(host, navigation, { onClose, onActivity, onQ
     return button;
   }
 
-  // Картка курсу в напрямі: обкладинка з позначкою галереї, назва, для кого,
-  // скільки коштує. Курс без власної іконки чи кольору виглядає як свій напрям.
-  function courseItem(id, parent, index) {
-    const child = navigation.tree.node(id);
-    const look = { icon: child?.icon || parent?.icon, accent: child?.accent || parent?.accent };
-    const button = withAccent(look, element('button', 'course-item'));
-    button.style.setProperty('--i', index);
-    const cover = element('span', 'course-cover');
-    const art = () => { const a = element('span', 'cover-art'); a.append(icon(look.icon)); return a; };
-    const img = contentImage(child, 'course-cover-image');
-    if (img) { img.addEventListener('error', () => img.replaceWith(art())); cover.append(img); }
-    else cover.append(art());
-    const media = mediaOf(child).filter(m => m.url !== child?.image);
-    if (media.length) {
-      const tag = element('span', 'cover-tag');
-      tag.append(icon(media.some(m => m.kind === 'video') ? 'play' : 'images'), element('span', '', mediaSummary(media)));
-      cover.append(tag);
-    }
-    const copy = element('span', 'course-copy');
-    copy.append(element('strong', '', navigation.tree.labelFor(id)));
-    const meta = [ageLabel(child?.age_min, child?.age_max), durationLabel(child?.duration_months)].filter(Boolean).join(' · ');
-    if (meta) copy.append(element('span', 'course-meta', meta));
-    const foot = element('span', 'course-foot');
-    if (child?.price) foot.append(element('span', 'course-price', child.price));
-    foot.append(badge('next', 'course-go'));
-    copy.append(foot);
-    button.append(cover, copy);
-    button.addEventListener('click', () => go(id));
-    return button;
+  // Факт у шапці напряму: значок, підпис дрібно, значення великим.
+  function fact(iconName, label, value, className = '') {
+    const li = element('li', `pw-fact ${className}`.trim());
+    const mark = element('span', 'pw-fact-icon'); mark.append(icon(iconName));
+    const text = element('span', 'pw-fact-text');
+    text.append(element('small', '', label), element('strong', '', value));
+    li.append(mark, text);
+    return li;
   }
 
-  // Напрям: шапка в його кольорі, стрічка фото й відео з занять, далі курси.
-  function renderPathway(node, items) {
-    const hero = withAccent(node, element('header', 'pathway-hero'));
-    const copy = element('div', 'hero-copy');
-    const age = ageLabel(node.age_min, node.age_max);
-    eyebrow.textContent = age ? `НАПРЯМ · ДЛЯ ДІТЕЙ ${age.toUpperCase()}` : 'НАПРЯМ';
-    copy.append(eyebrow, heading);
-    if (node.body) copy.append(element('p', 'pathway-intro', prose(node.body)));
-    hero.append(watermark(node.icon, 'hero-mark'), badge(node.icon, 'hero-badge'), copy);
-    body.append(hero);
+  function sectionTitle(text, iconName, note = '') {
+    const head = element('div', 'pw-section-head');
+    const title = element('h2', 'section-title');
+    if (iconName) title.append(icon(iconName));
+    title.append(element('span', '', text));
+    head.append(title);
+    if (note) head.append(element('p', 'pw-section-note', note));
+    return head;
+  }
 
+  // Права половина шапки. Відео напряму грає саме, без звуку; без відео —
+  // фото гортаються; без жодного кадру — знак напряму з назвами курсів довкола.
+  function pathwayVisual(node, courses, media) {
+    const visual = element('div', 'pw-visual');
+    const videos = media.filter(m => m.kind === 'video');
+    const featured = videos.length ? videos : media;
+    if (featured.length) {
+      const current = createStage(featured, { thumbs: false, onOpen: i => openGallery(featured, i) });
+      stage = current;
+      disposers.push(() => current.destroy());
+      visual.append(current.element);
+      const tag = element('span', 'pw-visual-tag');
+      tag.append(icon(videos.length ? 'play' : 'images'), element('span', '', videos.length ? 'Відео з занять' : 'Фото з занять'));
+      visual.append(tag);
+      return visual;
+    }
+    const art = element('div', 'pw-art');
+    art.append(element('span', 'pw-orbit one'), element('span', 'pw-orbit two'), watermark(node.icon, 'art-mark'), badge(node.icon, 'pw-art-badge'));
+    courses.slice(0, 4).forEach((id, i) => {
+      const chip = element('span', `pw-art-chip c${i}`, navigation.tree.labelFor(id));
+      chip.style.setProperty('--i', i);
+      art.append(chip);
+    });
+    visual.append(art);
+    return visual;
+  }
+
+  // Крок маршруту: номер на лінії, назва, вік і тривалість. Ціна тут лише
+  // тоді, коли вона інша, ніж у всього напряму: однакова вже стоїть у шапці.
+  function routeStep(id, parent, index, total) {
+    const child = navigation.tree.node(id);
+    const look = { icon: child?.icon || parent?.icon, accent: child?.accent || parent?.accent };
+    const li = withAccent(look, element('li', 'pw-step'));
+    li.style.setProperty('--i', index);
+    const dot = element('span', 'pw-step-dot', String(index + 1));
+    const button = element('button', 'pw-step-card');
+    // Обкладинка є в кожного кроку: фото курсу, а без нього — знак у кольорі
+    // напряму. Інакше картки з фото й без стоять різної висоти.
+    const cover = element('span', 'pw-step-cover');
+    const art = () => { cover.classList.add('is-art'); cover.replaceChildren(watermark(look.icon, 'pw-step-mark'), badge(look.icon, 'pw-step-badge')); };
+    const photo = mediaOf(child).find(m => m.kind === 'image' || m.poster);
+    if (photo) {
+      const img = element('img', 'pw-step-photo');
+      img.alt = ''; img.decoding = 'async'; img.src = photo.kind === 'image' ? photo.url : photo.poster;
+      img.addEventListener('error', art, { once: true });
+      cover.append(img);
+      const extra = mediaOf(child).length;
+      if (extra > 1) {
+        const tag = element('span', 'pw-step-tag');
+        tag.append(icon('images'), element('span', '', mediaSummary(mediaOf(child))));
+        cover.append(tag);
+      }
+    } else art();
+    button.append(cover);
+    const copy = element('span', 'pw-step-copy');
+    if (total === 1) copy.append(element('small', 'pw-step-kicker', 'Курс'));
+    copy.append(element('strong', '', navigation.tree.labelFor(id)));
+    const chips = element('span', 'pw-step-chips');
+    const age = ageLabel(child?.age_min, child?.age_max);
+    if (age) chips.append(element('span', 'pw-chip', age));
+    const months = durationLabel(child?.duration_months);
+    if (months) chips.append(element('span', 'pw-chip is-soft', months));
+    if (child?.price && child.price !== parent?.price) chips.append(element('span', 'pw-chip is-price', child.price));
+    if (chips.childElementCount) copy.append(chips);
+    const more = element('span', 'pw-step-more');
+    more.append(element('span', '', 'Детальніше'), icon('next'));
+    copy.append(more);
+    button.append(copy);
+    button.addEventListener('click', () => go(id));
+    li.append(dot, button);
+    return li;
+  }
+
+  // Напрям — сторінка-історія, а не список курсів: велика шапка з описом і
+  // відео, що дає дитині напрям, кадри з занять, і вже потім маршрут курсів.
+  function renderPathway(node, items) {
+    const article = withAccent(node, element('article', 'pathway-page'));
     const media = mediaOf(node);
-    if (media.length) {
-      const section = withAccent(node, element('section', 'pathway-gallery'));
-      const title = element('h2', 'section-title');
-      title.append(icon(media.some(m => m.kind === 'video') ? 'play' : 'images'), element('span', '', 'Як проходять заняття'));
-      section.append(title, createReel(media, { onOpen: i => openGallery(media, i) }));
-      body.append(section);
+    const courses = items;
+
+    const hero = element('section', 'pw-hero');
+    hero.append(element('span', 'pw-glow a'), element('span', 'pw-glow b'));
+    const copy = element('div', 'pw-copy');
+    eyebrow.textContent = 'НАПРЯМ';
+    const kicker = element('div', 'pw-kicker');
+    kicker.append(badge(node.icon, 'pw-badge'), eyebrow);
+    copy.append(kicker, heading);
+    const { lead, rest } = splitLead(prose(node.body));
+    if (lead) copy.append(element('p', 'pw-lead', lead));
+    if (rest) copy.append(element('p', 'pw-text', rest));
+    const facts = element('ul', 'pw-facts');
+    const age = ageLabel(node.age_min, node.age_max);
+    if (age) facts.append(fact('sprout', 'Вік', age));
+    if (courses.length) facts.append(fact('courses', courses.length > 1 ? 'Курси' : 'Курс', courses.length > 1 ? `${coursesLabel(courses.length)} · крок за кроком` : navigation.tree.labelFor(courses[0])));
+    if (node.price) facts.append(fact('wallet', courses.length > 1 ? 'Вартість, однакова для всіх курсів' : 'Вартість', node.price, 'is-price'));
+    if (facts.childElementCount) copy.append(facts);
+    hero.append(copy, pathwayVisual(node, courses, media));
+    article.append(hero);
+
+    const highlights = Array.isArray(node.highlights) ? node.highlights.filter(h => typeof h === 'string' && h) : [];
+    if (highlights.length) {
+      const gains = element('section', 'pw-gains');
+      gains.append(sectionTitle('Що отримає дитина', 'sparkles'));
+      const list = element('ul', 'pw-gain-list');
+      list.dataset.count = String(highlights.length);
+      highlights.forEach((text, i) => {
+        const li = element('li', 'pw-gain');
+        li.style.setProperty('--i', i);
+        const mark = element('span', 'pw-gain-mark'); mark.append(icon('check'));
+        li.append(mark, element('span', '', text));
+        list.append(li);
+      });
+      gains.append(list);
+      article.append(gains);
     }
 
-    const shown = items.slice(page * 10, page * 10 + 10);
-    const section = element('section', 'pathway-courses');
-    if (items.length > 1) section.append(element('h2', 'section-title', 'Курси напряму'));
-    const list = withAccent(node, element('div', 'course-list'));
-    list.dataset.count = String(Math.min(shown.length, 3));
-    shown.forEach((id, i) => list.append(courseItem(id, node, i)));
-    section.append(list);
-    body.append(section);
+    if (media.length > 1) {
+      const moments = element('section', 'pw-moments');
+      moments.append(sectionTitle('Як проходять заняття', 'images', mediaSummary(media)));
+      moments.append(createMosaic(media, { onOpen: i => openGallery(media, i) }));
+      article.append(moments);
+    }
+
+    const shown = courses.slice(0, 10);
+    if (shown.length) {
+      const route = element('section', 'pw-route');
+      route.append(sectionTitle(shown.length > 1 ? 'Курси напряму' : 'Курс напряму', 'courses',
+        shown.length > 1 ? 'Від першого рівня до впевнених власних проєктів. Торкніться курсу, щоб дізнатися більше.' : 'Торкніться курсу, щоб дізнатися більше.'));
+      const list = element('ol', 'pw-steps');
+      list.dataset.count = String(shown.length);
+      shown.forEach((id, i) => list.append(routeStep(id, node, i, shown.length)));
+      route.append(list);
+      article.append(route);
+    }
+
+    const cta = element('aside', 'pw-cta');
+    const ctaIcon = element('span', 'pw-cta-icon'); ctaIcon.append(icon('bot'));
+    const ctaCopy = element('div');
+    ctaCopy.append(element('strong', '', 'Приходьте на пробне заняття'), element('p', '', 'Адміністратор поруч: підбере курс і групу за віком та розкладом.'));
+    cta.append(ctaIcon, ctaCopy);
+    article.append(cta);
+
+    body.append(article);
   }
 
   function renderMenu(node) {
@@ -273,7 +390,7 @@ export function createContentScreen(host, navigation, { onClose, onActivity, onQ
     if (node.kind === 'menu') renderMenu(node); else renderCard(node);
     head.hidden = !head.childElementCount;
     measure();
-    root.dataset.page = node.kind === 'card' ? 'course' : body.querySelector('.pathway-hero') ? 'pathway' : 'menu';
+    root.dataset.page = node.kind === 'card' ? 'course' : body.querySelector('.pathway-page') ? 'pathway' : 'menu';
     heading.focus({ preventScroll: true });
     if (!reducedMotion()) {
       body.animate([{ opacity: 0, transform: `translateX(${navigation.direction * 18}px)` }, { opacity: 1, transform: 'translateX(0)' }], { duration: 230, easing: 'cubic-bezier(.22,1,.36,1)' });

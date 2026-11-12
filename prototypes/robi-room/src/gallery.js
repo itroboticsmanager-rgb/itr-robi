@@ -63,18 +63,27 @@ function thumb(item, className) {
   return frame;
 }
 
-/** Стрічка кадрів на сторінці напряму: дотик відкриває повний екран. */
-export function createReel(items, { onOpen }) {
-  const reel = element('div', 'media-reel');
-  items.forEach((item, index) => {
-    const button = element('button', 'reel-item');
+/**
+ * Мозаїка «як проходять заняття»: перший кадр великий, решта поруч.
+ * Дотик відкриває повний екран; відео тут лише кадром — грає одне, на сцені.
+ */
+export function createMosaic(items, { onOpen }) {
+  const grid = element('div', 'media-mosaic');
+  // Сітка має бути рівною: великий кадр і чотири менші, решта — «+N» на
+  // останньому. Чотири й менше кадрів мають власні розкладки.
+  const shown = items.slice(0, items.length >= 5 ? 5 : items.length);
+  grid.dataset.count = String(shown.length);
+  shown.forEach((item, index) => {
+    const button = element('button', 'mosaic-item');
     button.setAttribute('aria-label', item.kind === 'video' ? `Відео ${index + 1}` : `Фото ${index + 1}`);
     button.style.setProperty('--i', index);
-    button.append(thumb(item, 'reel-frame'));
+    button.append(thumb(item, 'mosaic-frame'));
+    const rest = items.length - shown.length;
+    if (index === shown.length - 1 && rest > 0) button.append(element('span', 'mosaic-more', `+${rest}`));
     button.addEventListener('click', () => onOpen(index));
-    reel.append(button);
+    grid.append(button);
   });
-  return reel;
+  return grid;
 }
 
 /**
@@ -82,7 +91,7 @@ export function createReel(items, { onOpen }) {
  * Фото стоїть кілька секунд, відео грає без звуку до кінця. Звук — лише в
  * повному екрані, куди людина зайшла сама: хол школи не кінозал.
  */
-export function createStage(items, { onOpen }) {
+export function createStage(items, { onOpen, thumbs: withThumbs = true }) {
   const root = element('div', 'gallery');
   const stage = element('button', 'gallery-stage');
   stage.setAttribute('aria-label', 'Відкрити галерею на весь екран');
@@ -101,7 +110,8 @@ export function createStage(items, { onOpen }) {
     thumbs.append(button);
     return button;
   });
-  if (items.length > 1) root.append(thumbs);
+  if (items.length > 1 && withThumbs) root.append(thumbs);
+  else root.classList.add('no-thumbs');
 
   let current = -1, timer = 0, paused = false, video = null;
 
