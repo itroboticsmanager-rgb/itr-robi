@@ -56,8 +56,22 @@ try {
     Write-Host "release copied to $rel"
 
     # 3. Optional scanner decoder; without it the scan button simply hides.
-    & $py -m pip install --no-index --find-links (Join-Path $usb 'wheels') 'zxing-cpp>=3.1,<4' -q 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) { Write-Host 'warning: zxing-cpp not installed, scanner will stay hidden' -ForegroundColor Yellow }
+    #    Already installed by an earlier stick -> nothing to do (no wheels needed).
+    & $py -c 'import zxingcpp' 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        & $py -m pip install --no-index --find-links (Join-Path $usb 'wheels') 'zxing-cpp>=3.1,<4' -q 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { Write-Host 'warning: zxing-cpp not installed, scanner will stay hidden' -ForegroundColor Yellow }
+    } else { Write-Host 'zxing-cpp already installed' }
+
+    # 3b. Kiosk settings from CRM (D-068): add the [settings] section once.
+    #     The old file is kept next to it; an existing section is never touched.
+    $toml = Join-Path $root 'device.toml'
+    if (-not (Select-String -LiteralPath $toml -Pattern '^\s*\[settings\]' -Quiet)) {
+        Copy-Item -LiteralPath $toml -Destination "$toml.bak-$stamp"
+        $section = "`r`n[settings]`r`nurl = `"https://crm.itrobotics.com.ua/api/device/settings`"`r`ncache_dir = `"C:/ROBI/cache/settings`"`r`nrefresh_s = 300.0`r`n"
+        [System.IO.File]::AppendAllText($toml, $section, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "device.toml: [settings] added (backup $toml.bak-$stamp)"
+    } else { Write-Host 'device.toml: [settings] already present' }
 
     # 4. Smoke test BEFORE locking anything: the new code must import and
     #    parse this tablet's device.toml. A broken release must not end up
@@ -73,6 +87,23 @@ try {
     Write-Host '--- state'
     Get-ScheduledTask -TaskName 'ROBI Kiosk' | Select-Object TaskName, State | Format-Table | Out-Host
     Get-Content 'C:\ROBI\kiosk\kiosk.json' | Out-Host
+
+    # 6. Remote maintenance must survive a new Wi-Fi: a network Windows sees
+    #    for the first time is "Public", and the SSH firewall rule then drops
+    #    everything (seen on the school Wi-Fi). Best effort: never fails the install.
+    Write-Host ''
+    Write-Host '--- remote access'
+    try {
+        Get-NetConnectionProfile | Where-Object NetworkCategory -eq 'Public' | ForEach-Object {
+            Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private
+            Write-Host "network '$($_.Name)' -> Private"
+        }
+        Set-Service -Name sshd -StartupType Automatic
+        if ((Get-Service sshd).Status -ne 'Running') { Start-Service sshd }
+        Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue | Enable-NetFirewallRule
+        Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
+            ForEach-Object { Write-Host "ssh robiadmin@$($_.IPAddress)  ($($_.InterfaceAlias))" }
+    } catch { Write-Host "warning: remote access not restored: $($_.Exception.Message)" -ForegroundColor Yellow }
 
     Done $true 'kiosk installed and locked. Restarting in 30 s; after login ROBI opens by itself.'
     & shutdown.exe /r /t 30 /c 'ROBI: kiosk installed, restarting'
