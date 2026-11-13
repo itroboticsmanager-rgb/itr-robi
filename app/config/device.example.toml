@@ -118,6 +118,16 @@ url = "https://crm.itrobotics.com.ua/api/device/banners"
 cache_dir = "C:/ROBI/cache/banners"
 refresh_s = 900.0
 
+[settings]
+# Налаштування стійки з CRM (D-068): яскравість, гучність, години роботи,
+# поведінка кіоску. Зміна в CRM доходить миттєво сигналом у real-time
+# каналі; опитування лише страхує, якщо сигнал загубився.
+url = "https://crm.itrobotics.com.ua/api/device/settings"
+# Останній вдалий набір на диску: розклад і гучність мають пережити
+# перезапуск без мережі.
+cache_dir = "C:/ROBI/cache/settings"
+refresh_s = 300.0
+
 [features]
 camera = true
 scanner = true  # QR і штрихкоди; кадри обробляються лише локально та не зберігаються

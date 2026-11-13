@@ -186,6 +186,19 @@ CRM закривають анкету, фрейм знищується разо�
 мусить пускати домен CRM: `install-kiosk.ps1 -AllowOrigin` (типово
 `https://crm.itrobotics.com.ua`).
 
+### Налаштування стійки (`D-068`)
+
+**Зроблено 2026-11-13.** У вкладці «Сайт → Кіоск ROBI» над списком напрямів — «Налаштування стійки»: екран, звук, години роботи, поведінка кіоску. Збереження піднімає версію набору в `kiosk_device_settings` і шле в `device:<id>` сигнал `settings.changed`.
+
+| Хто | Що |
+|---|---|
+| Пристрій → CRM | `GET /api/device/settings`, `Authorization: Bearer <секрет>`, заголовки `X-Robi-Applied-Revision`, `X-Robi-Controls` |
+| CRM → пристрій | `{"revision": N, "settings": {…}}`; версія 0 — у CRM ще нічого не зберігали |
+| CRM → канал | подія `settings.changed` без відповіді — лише «перепитай» |
+
+- Пристрій з `[settings]` у `device.toml` (див. `device.example.toml`) опитує CRM раз на `refresh_s` і миттєво після сигналу; без секції все працює, як раніше.
+- Міграція CRM: `npm run db:add-kiosk-settings` (dev накатано), на проді — `db:add-kiosk-settings:prod` **до** деплою коду.
+
 ### Чому звірки стану немає — і не буде
 
 `device.sync` лишився без обробника в CRM свідомо. Продумавши задачу до кінця, я вважаю сам механізм невірним для цього пристрою.

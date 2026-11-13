@@ -1,4 +1,5 @@
 import { element, icon } from './icons.js';
+import { kioskSettings } from './kiosk-settings.js';
 
 // Галерея напряму чи курсу (D-063): фото й переважно вертикальні відео з
 // занять. Адреси — лише локальні `/media/content/…`, які віддає пристрій зі
@@ -208,6 +209,8 @@ export function createLightbox(host, { onActivity, onClose } = {}) {
     if (item.kind === 'video') {
       media = element('video', 'lightbox-media');
       media.playsInline = true; media.preload = 'auto'; media.muted = !withSound;
+      // Гучність відео задає CRM (D-068) поверх системної гучності планшета.
+      media.volume = kioskSettings.video_volume / 100;
       if (item.poster) media.poster = item.poster;
       media.src = item.url;
       media.addEventListener('timeupdate', () => {
@@ -272,7 +275,7 @@ export function createLightbox(host, { onActivity, onClose } = {}) {
     get open() { return !root.hidden; },
     show(list, start = 0) {
       if (!list.length) return;
-      items = list; withSound = true; renderSound();
+      items = list; withSound = kioskSettings.video_sound; renderSound();
       root.hidden = false; show(start);
       close.focus({ preventScroll: true });
     },

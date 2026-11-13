@@ -1,6 +1,7 @@
 import './style.css';
 import { createLogoStage } from './logostage.js';
 import { createKiosk } from './kiosk.js';
+import { kioskSettings } from './kiosk-settings.js';
 
 const $ = s => document.querySelector(s);
 const canvas = $('#scene'), sensor = $('#window-sensor');
@@ -39,7 +40,9 @@ function motion(value) {
   document.documentElement.classList.remove('mascot-present');
   wake();
 }
-query.addEventListener('change', e => motion(e.matches));
+// «Менше руху» з CRM (D-068) додається до системного, а не заміняє його.
+query.addEventListener('change', e => motion(e.matches || kioskSettings.reduced_motion));
+document.addEventListener('robi:settings', () => { const value = query.matches || kioskSettings.reduced_motion; if (value !== reduced) motion(value); });
 // Свайп «назад» на сенсорі вивів Edge зі сторінки кіоску на заблоковану
 // адресу (D-064). Жест гасить CSS (overscroll-behavior), а на випадок, якщо
 // Edge його все одно виконає, тримаємо власний запис історії: «назад» лише

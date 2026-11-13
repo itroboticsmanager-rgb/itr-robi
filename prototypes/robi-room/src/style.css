@@ -189,3 +189,10 @@ html,body{overscroll-behavior:none}
 .form-veil-text{margin:0;max-width:30ch;font-size:1.6rem;font-weight:600;line-height:1.35;letter-spacing:-.02em}
 .form-veil-actions{display:flex;gap:16px;flex-wrap:wrap;justify-content:center}
 .form-veil-actions button{min-width:220px;min-height:64px;font-size:1.05rem}
+
+/* Сон поза годинами роботи (D-068): екран майже темний, але живий —
+   людина бачить, що кіоск не зламаний, і знає, як його розбудити. */
+.sleep-screen{position:fixed;inset:0;z-index:80;display:grid;place-content:center;gap:14px;text-align:center;background:radial-gradient(60% 50% at 50% 45%,oklch(22% .03 255),oklch(9% .015 255));color:oklch(78% .03 250);cursor:pointer;animation:fade .8s ease-out}
+.sleep-title{margin:0;font-size:2.2rem;font-weight:650;letter-spacing:-.03em;color:oklch(88% .03 250)}
+.sleep-hint{margin:0;font-size:1rem;opacity:.7;animation:sleep-breath 4s ease-in-out infinite}
+@keyframes sleep-breath{50%{opacity:.35}}

@@ -34,6 +34,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -41,6 +42,10 @@ from urllib.parse import quote
 import websockets
 
 from ..events import Command, CommandKind, CommandResult, now
+
+#: Події, що не є командами: пристрій лише перепитує CRM, нічого не
+#: виконуючи з рук каналу. Тому й відповіді на них немає (D-068).
+SIGNALS = frozenset({"settings.changed"})
 
 def _log(line: str) -> None:
     """Журнал зв'язку з CRM у stdout служби (C:/ROBI/logs/service.log).
@@ -76,8 +81,11 @@ class CrmClient:
         token: str = "",
         token_url: str = "",
         secret_path: str = "",
+        on_signal: Callable[[str], None] | None = None,
     ) -> None:
         self._url = url.rstrip("/")
+        #: Сигнали без відповіді (`settings.changed`): не команди, а «перепитай».
+        self._on_signal = on_signal
         self._device_id = device_id
         self._device_no = device_no
         self._static_token = token
@@ -320,6 +328,11 @@ class CrmClient:
         data = message.get("data")
         if not isinstance(data, dict):
             data = {}
+
+        if event in SIGNALS:
+            if self._on_signal is not None:
+                self._on_signal(event)
+            return None
 
         try:
             kind = CommandKind(event)

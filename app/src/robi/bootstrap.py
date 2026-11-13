@@ -34,6 +34,7 @@ from .events import (
     now,
 )
 from .hardware.fake import FakeNfc, FakeOutputs, FakeToF
+from .hardware.system import FakeSystemControls, make_system_controls
 from .health.metrics import FrameStats, Metrics
 from .integration.crm import CrmClient
 from .integration.policy import UrlPolicy
@@ -45,6 +46,7 @@ from .state.machine import StateMachine, SystemState
 from .web import LocalWebService, MemoryAsset, MemoryStream, WebServiceError, snapshot
 from .web.bridge import WebBridge
 from .scanner import BarcodeScanner
+from .settings import KioskSettings, SettingsSet, SettingsStore
 from .wifi import WifiAccess, WifiShareError, WindowsWifiProvider
 from .ui.overlay import Overlay
 from .vision.fake import FakeVision
@@ -200,7 +202,22 @@ class App:
                 token=config.crm.token,
                 token_url=config.crm.token_url,
                 secret_path=config.crm.secret_path,
+                on_signal=self._on_crm_signal,
             )
+
+        # Налаштування стійки з CRM (D-068). Без збереженого набору діють
+        # типові, а вони навмисно нічого не чіпають: яскравість і гучність
+        # лишаються такими, як їх виставили на самому планшеті.
+        self._settings_store = SettingsStore(config.settings.cache_dir) if config.settings.cache_dir else None
+        cached = self._settings_store.load() if self._settings_store is not None else None
+        self._settings_set = cached or SettingsSet(0, KioskSettings())
+        self._settings_effective = self._settings_set.settings.effective(datetime.now())
+        self._settings_wake = threading.Event()
+        self._settings_stop = threading.Event()
+        self._settings_thread: threading.Thread | None = None
+        self._settings_applied: dict[str, int] = {}
+        self._settings_report = "none"
+        self.system = FakeSystemControls() if headless else make_system_controls()
 
         self._banners = self._make_banner_store(config)
         self._banner_images: dict[int, object] = {}
@@ -282,6 +299,69 @@ class App:
                         mascot.banners = self._banners.load()
                         self._banner_images.clear()
             self._banner_stop.wait(self.config.banners.refresh_s)
+
+    # -- налаштування стійки (D-068) ---------------------------------------
+
+    def _on_crm_signal(self, event: str) -> None:
+        """Сигнал із каналу CRM: лише будить потік налаштувань."""
+        if event == "settings.changed":
+            self._settings_wake.set()
+
+    def _settings_forever(self) -> None:
+        """Забирає набір із CRM і застосовує розклад.
+
+        Окремий потік, бо яскравість через WMI коштує пів секунди, а мережа —
+        скільки завгодно. Цикл прокидається раз на 15 с, щоб межа робочих
+        годин спрацьовувала вчасно, і миттєво — від сигналу `settings.changed`.
+        """
+        secret = self.crm.read_secret() if self.crm is not None else ""
+        next_fetch = 0.0
+        last_assert = time.monotonic()
+        while not self._settings_stop.is_set():
+            moment = time.monotonic()
+            woken = self._settings_wake.is_set()
+            if self.config.settings.url and secret and (woken or moment >= next_fetch):
+                self._settings_wake.clear()
+                fresh, reason = self._settings_store.refresh(
+                    self.config.settings.url, secret,
+                    applied=self._settings_set.revision, report=self._settings_report,
+                )
+                if fresh is not None:
+                    if fresh.revision != self._settings_set.revision:
+                        print(f"[settings] застосовую версію {fresh.revision}", flush=True)
+                    self._settings_set = fresh
+                elif reason.startswith("invalid"):
+                    print(f"[settings] набір із CRM відхилено, лишається попередній: {reason}", flush=True)
+                next_fetch = moment + self.config.settings.refresh_s
+            else:
+                self._settings_wake.clear()
+            # Раз на 10 хвилин значення ставляться повторно: хтось міг
+            # покрутити гучність кнопками планшета, а CRM — джерело правди.
+            force = moment - last_assert > 600
+            if force:
+                last_assert = moment
+            self._apply_settings(force=force)
+            self._settings_wake.wait(15.0)
+
+    def _apply_settings(self, *, force: bool = False, now: datetime | None = None) -> None:
+        effective = self._settings_set.settings.effective(now or datetime.now())
+        self._settings_effective = effective
+        report: list[str] = []
+        for name, target, setter in (
+            ("brightness", effective.brightness, self.system.set_brightness),
+            ("volume", effective.volume, self.system.set_volume),
+        ):
+            if target is None:
+                self._settings_applied.pop(name, None)
+                report.append(f"{name}=off")
+                continue
+            if force or self._settings_applied.get(name) != target:
+                if setter(target):
+                    self._settings_applied[name] = target
+                else:
+                    self._settings_applied.pop(name, None)
+            report.append(f"{name}={'ok' if self._settings_applied.get(name) == target else 'failed'}")
+        self._settings_report = ",".join(report)
 
     def _initial_content(self, config: Config) -> tuple[Content | None, Path | None]:
         """Меню з CRM, якщо набір уже був; інакше локальний файл.
@@ -382,6 +462,12 @@ class App:
             )
             self._banner_thread.start()
 
+        if self._settings_store is not None:
+            self._settings_thread = threading.Thread(
+                target=self._settings_forever, name="robi-settings", daemon=True
+            )
+            self._settings_thread.start()
+
         if self._content_store is not None and self.config.content.url:
             self._content_thread = threading.Thread(
                 target=self._refresh_content_forever, name="robi-content", daemon=True
@@ -469,7 +555,11 @@ class App:
                 network=str(active.payload.get("network", "")),
                 password=str(active.payload.get("password", "")),
             )
-        state["idle_timeout_s"] = self.config.content.timeout_s
+        kiosk = self._settings_set.settings
+        # Час бездіяльності з CRM діє, лише коли CRM уже прислала набір:
+        # до того — як у конфігурації пристрою.
+        state["idle_timeout_s"] = kiosk.idle_timeout_s if self._settings_set.revision else self.config.content.timeout_s
+        state["settings"] = kiosk.for_web(self._settings_effective)
         state["mascot"]["gaze"] = list(mascot.face._gaze) if self.vision.capturing and mascot._since_face < 1.5 else None
         state["banners"] = [
             {"id": b.id, "title": b.title, "description": b.description,
@@ -644,6 +734,8 @@ class App:
         return {"ok": True, "snapshot": self._web_snapshot()}
 
     def shutdown(self) -> None:
+        self._settings_stop.set()
+        self._settings_wake.set()
         self._banner_stop.set()
         self._content_stop.set()
         if self._web is not None:
@@ -893,6 +985,7 @@ class App:
             mode.wants_camera()
             and self.config.features.camera
             and self.config.vision.camera_allowed_at(datetime.now().time())
+            and self._settings_effective.camera_allowed
         )
         if wants and not self.vision.capturing:
             self.vision.start_capture()

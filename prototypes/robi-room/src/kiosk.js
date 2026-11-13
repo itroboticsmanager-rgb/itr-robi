@@ -3,6 +3,7 @@ import { createContentScreen } from './menu.js';
 import { element, icon } from './icons.js';
 import { createBannerArt } from './banners.js';
 import { createFormScreen, WARN_BEFORE_MS } from './form.js';
+import { applyKioskSettings, kioskSettings } from './kiosk-settings.js';
 
 const $ = s => document.querySelector(s);
 
@@ -14,6 +15,21 @@ export function createKiosk({ pauseScene, mascot }) {
   let lastBannerContent = '';
   let carouselTime = 0, launcherPage = 0;
   let scannerAvailable = false, scannerRetry = 0;
+  // Сон поза годинами роботи (D-068): темний екран замість вітрини, перший
+  // дотик будить. Без дотику на час бездіяльності кіоск засинає знову.
+  let lastTouch = performance.now(), asleep = false;
+  const sleep = element('section', 'sleep-screen'); sleep.hidden = true;
+  sleep.setAttribute('aria-label', 'Кіоск відпочиває. Торкніться, щоб розбудити');
+  sleep.append(element('p', 'sleep-title', 'Робі відпочиває'), element('p', 'sleep-hint', 'Торкніться екрана, щоб розбудити'));
+  $('#screens').append(sleep);
+  addEventListener('pointerdown', () => { lastTouch = performance.now(); }, { capture: true, passive: true });
+  sleep.addEventListener('pointerdown', () => setAsleep(false));
+  function setAsleep(value) {
+    if (value === asleep) return;
+    asleep = value; sleep.hidden = !value;
+    $('#home').inert = value || mode !== 'home';
+    pauseScene(value || mode === 'info' || mode === 'qr' || mode === 'scanner' || mode === 'form');
+  }
   const screen = createContentScreen($('#screens'), nav, { onClose: () => close(), onActivity: activity, onQr: id => openQr(id) });
   const qr = element('section', 'qr-screen'); qr.hidden = true; qr.setAttribute('aria-label', 'QR-код');
   const qrBar = element('header', 'content-bar'), qrClose = element('button', 'secondary-button', 'На головну');
@@ -124,8 +140,8 @@ export function createKiosk({ pauseScene, mascot }) {
       if (!form.show(display.url, display.title)) { next = 'home'; mode = 'home'; }
       else lastFormActivity = 0;
     }
-    $('#home').inert = next !== 'home';
-    pauseScene(next === 'info' || next === 'qr' || next === 'scanner' || next === 'form');
+    $('#home').inert = next !== 'home' || asleep;
+    pauseScene(asleep || next === 'info' || next === 'qr' || next === 'scanner' || next === 'form');
     document.body.dataset.screen = mode;
     if (returning) {
       launcherPage = returnPage; renderLauncher();
@@ -189,7 +205,8 @@ export function createKiosk({ pauseScene, mascot }) {
     const root = tree.node(tree.root), all = (root?.items ?? []).filter(id => tree.visible(id));
     // Wi-Fi і сканер — локальні постійні дії, а не контент CRM. Вони займають
     // останні місця на кожній сторінці, щоб гість не мусив їх шукати.
-    const perRow = 5, fixedCount = scannerAvailable ? 2 : 1;
+    const showScanner = scannerAvailable && kioskSettings.show_scanner;
+    const perRow = 5, fixedCount = (kioskSettings.show_wifi ? 1 : 0) + (showScanner ? 1 : 0);
     const paged = all.length > perRow - fixedCount;
     const pageSize = paged ? perRow - fixedCount - 1 : perRow - fixedCount;
     launcherPage = Math.min(launcherPage, Math.max(0, Math.ceil(all.length / pageSize) - 1));
@@ -223,10 +240,12 @@ export function createKiosk({ pauseScene, mascot }) {
       const more = launcherButton('grid', 'Ще розділи');
       more.addEventListener('click', () => { launcherPage = (launcherPage + 1) % Math.ceil(all.length / pageSize); renderLauncher(); }); launcher.append(more);
     }
-    const wifi = launcherButton('wifi', 'Wi-Fi');
-    wifi.classList.add('wifi-launcher');
-    wifi.addEventListener('click', () => openWifi(wifi)); launcher.append(wifi);
-    if (scannerAvailable) {
+    if (kioskSettings.show_wifi) {
+      const wifi = launcherButton('wifi', 'Wi-Fi');
+      wifi.classList.add('wifi-launcher');
+      wifi.addEventListener('click', () => openWifi(wifi)); launcher.append(wifi);
+    }
+    if (showScanner) {
       const scan = launcherButton('scan', 'Сканувати код');
       scan.classList.add('scanner-launcher');
       scan.addEventListener('click', () => openScanner(scan)); launcher.append(scan);
@@ -282,6 +301,7 @@ export function createKiosk({ pauseScene, mascot }) {
     if (!snapshot?.display) return;
     connected = true; lastSnapshotAt = performance.now();
     timeout = Number.isFinite(snapshot.idle_timeout_s) ? Math.max(15, snapshot.idle_timeout_s) : 45;
+    const settingsChanged = applyKioskSettings(snapshot.settings);
     const hadScanner = scannerAvailable;
     scannerAvailable = snapshot.capabilities?.scanner === true;
     const ck = JSON.stringify(snapshot.content), bk = JSON.stringify(snapshot.banners);
@@ -289,7 +309,7 @@ export function createKiosk({ pauseScene, mascot }) {
       contentKey = ck; tree = new ContentTree(snapshot); nav.tree = tree; renderLauncher();
       if (mode === 'info' && !tree.has(nav.current?.id)) setMode('home');
     }
-    else if (hadScanner !== scannerAvailable) renderLauncher();
+    else if (hadScanner !== scannerAvailable || settingsChanged) renderLauncher();
     if (bk !== bannersKey || ck !== lastBannerContent) { bannersKey = bk; lastBannerContent = ck; renderBanners(snapshot.banners); }
     mascot(snapshot.mascot?.state ?? 'idle', snapshot.mascot?.gaze);
     const d = snapshot.display;
@@ -439,12 +459,13 @@ export function createKiosk({ pauseScene, mascot }) {
       if (left > 0 && left < WARN_BEFORE_MS) form.warn(Math.ceil(left / 1000)); else form.calm();
     }
     syncBannerMotion();
+    setAsleep(kioskSettings.sleeping && mode === 'home' && now - lastTouch > timeout * 1000);
     // Кнопок каруселі немає, тож банери гортаються самі завжди, і при
     // зменшеній анімації теж (тоді лише без переходу), інакше кіоск
     // назавжди лишився б на першому банері.
     if (mode === 'home' && !document.hidden && !document.documentElement.classList.contains('mascot-present') && !$('.showcase').matches(':focus-within') && items.length > 1) {
       carouselTime += dt;
-      if (carouselTime >= 14000) changeBanner(index + 1);
+      if (carouselTime >= kioskSettings.banner_interval_s * 1000) changeBanner(index + 1);
     }
   }, 200);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) expire(); carouselTime = 0; syncBannerMotion(); });

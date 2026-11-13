@@ -156,6 +156,20 @@ class BannersConfig:
 
 
 @dataclass(slots=True)
+class SettingsConfig:
+    """Налаштування стійки з CRM: яскравість, гучність, розклад (`D-068`).
+
+    Порожній `url` — пристрій керується лише локально, як досі. Набір
+    перепитується нечасто: зміну в CRM миттєво доносить сигнал у real-time
+    каналі, а опитування лише страхує, коли сигнал загубився.
+    """
+
+    url: str = ""
+    cache_dir: str = ""
+    refresh_s: float = 300.0
+
+
+@dataclass(slots=True)
 class WebConfig:
     """Локальна служба, з якої читає веб-інтерфейс.
 
@@ -199,6 +213,7 @@ class Config:
     vision: VisionConfig = field(default_factory=VisionConfig)
     content: ContentConfig = field(default_factory=ContentConfig)
     banners: BannersConfig = field(default_factory=BannersConfig)
+    settings: SettingsConfig = field(default_factory=SettingsConfig)
     web: WebConfig = field(default_factory=WebConfig)
     wifi_share: WifiShareConfig = field(default_factory=WifiShareConfig)
 
@@ -283,6 +298,13 @@ class Config:
             refresh_s=float(b.get("refresh_s", 900.0)),
         )
 
+        s = raw.get("settings", {})
+        cfg.settings = SettingsConfig(
+            url=str(s.get("url", "")),
+            cache_dir=str(s.get("cache_dir", "")),
+            refresh_s=float(s.get("refresh_s", 300.0)),
+        )
+
         w = raw.get("web", {})
         cfg.web = WebConfig(
             enabled=bool(w.get("enabled", False)),
@@ -335,6 +357,10 @@ class Config:
             raise ConfigError("content.refresh_s не може бути меншим за хвилину")
         if self.banners.refresh_s < 60.0:
             raise ConfigError("banners.refresh_s не може бути меншим за хвилину")
+        if self.settings.refresh_s < 30.0:
+            raise ConfigError("settings.refresh_s не може бути меншим за 30 с")
+        if self.settings.url and not self.settings.cache_dir:
+            raise ConfigError("settings.url потребує settings.cache_dir: без кешу пристрій забуде розклад після перезапуску")
         # Пристрій стоїть у холі школи поруч з анкетою на персональні дані
         # (`D-049`). Не-локальна адреса — це відкритий порт без потреби, тож
         # одруківка в конфігурації має зупинити старт, а не вийти в мережу.
