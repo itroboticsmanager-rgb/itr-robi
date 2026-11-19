@@ -32,8 +32,10 @@ if ($Version -notmatch '^[A-Za-z0-9._-]{1,64}$') { throw "bad version: $Version"
 
 Write-Host "[publish] building web"
 Push-Location prototypes\robi-room
-& npm run build | Out-Null
-if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'web build failed' }
+# Through cmd: vite writes warnings to stderr, and PowerShell 5.1 with
+# ErrorActionPreference=Stop would treat them as a failure.
+& cmd /c "npm run build >nul 2>&1"
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'web build failed (run npm run build in prototypesobi-room to see why)' }
 Pop-Location
 
 $out = Join-Path $repo 'artifacts\robi-release'
