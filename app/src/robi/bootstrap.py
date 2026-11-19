@@ -34,7 +34,7 @@ from .events import (
     now,
 )
 from .hardware.fake import FakeNfc, FakeOutputs, FakeToF
-from .hardware.system import FakeSystemControls, make_system_controls
+from .hardware.system import FakeSystemControls, SystemControls, make_system_controls
 from .health.metrics import FrameStats, Metrics
 from .integration.crm import CrmClient
 from .integration.policy import UrlPolicy
@@ -106,6 +106,7 @@ class App:
         headless: bool = False,
         uncapped: bool = False,
         clock: "Callable[[], float]" = now,
+        system: "SystemControls | None" = None,
     ) -> None:
         self.config = config
         self.headless = headless
@@ -217,7 +218,14 @@ class App:
         self._settings_thread: threading.Thread | None = None
         self._settings_applied: dict[str, int] = {}
         self._settings_report = "none"
-        self.system = FakeSystemControls() if headless else make_system_controls()
+        # «Без вікна» не означає «без заліза»: веб-кіоск теж headless, але
+        # мусить керувати справжнім екраном і звуком — тому він передає
+        # `system` явно. Типова підміна лишається для тестів і `--headless`
+        # (19.11.2026 саме вона тихо звітувала CRM «ok», нічого не змінюючи).
+        if system is not None:
+            self.system = system
+        else:
+            self.system = FakeSystemControls() if headless else make_system_controls()
 
         self._banners = self._make_banner_store(config)
         self._banner_images: dict[int, object] = {}

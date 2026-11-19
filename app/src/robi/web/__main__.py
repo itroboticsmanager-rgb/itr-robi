@@ -26,7 +26,9 @@ def main():
     config.display.width, config.display.height = 640, 480
     config.display.target_fps = 30
     from ..bootstrap import App
-    app = App(config, headless=True)
+    from ..hardware.system import make_system_controls
+    # Справжні яскравість і гучність: веб-кіоск headless лише щодо pygame.
+    app = App(config, headless=True, system=make_system_controls())
     try:
         app.boot()
         if app._web is None:
