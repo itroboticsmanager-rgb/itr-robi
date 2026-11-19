@@ -35,7 +35,7 @@ Push-Location prototypes\robi-room
 # Through cmd: vite writes warnings to stderr, and PowerShell 5.1 with
 # ErrorActionPreference=Stop would treat them as a failure.
 & cmd /c "npm run build >nul 2>&1"
-if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'web build failed (run npm run build in prototypesobi-room to see why)' }
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'web build failed (run npm run build in prototypes/robi-room to see why)' }
 Pop-Location
 
 $out = Join-Path $repo 'artifacts\robi-release'
