@@ -64,13 +64,17 @@ $latest = Join-Path $out 'robi\latest.json'
 Write-Host ("[publish] {0}  {1:N1} MB  sha256 {2}" -f $Version, ((Get-Item $zip).Length / 1MB), $sha)
 
 if ($Upload) {
-    # tar | tailscale ssh, the same way the guide images go up.
+    # tar | tailscale ssh, the same way the guide images go up. Through cmd:
+    # a PowerShell 5.1 pipe between two native programs re-encodes the bytes
+    # as text and would corrupt the archive.
     Write-Host "[publish] uploading robi/$Version"
-    & tar -cf - -C (Join-Path $out '') "robi/$Version" | & tailscale ssh $Vps "mkdir -p $VpsRoot/robi && tar -xf - -C $VpsRoot"
+    & cmd /c "tar -cf - -C `"$out`" robi/$Version | tailscale ssh $Vps `"mkdir -p $VpsRoot/robi && tar -xf - -C $VpsRoot`""
     if ($LASTEXITCODE -ne 0) { throw 'upload of the release failed' }
     Write-Host "[publish] uploading robi/latest.json"
-    & tar -cf - -C (Join-Path $out '') 'robi/latest.json' | & tailscale ssh $Vps "tar -xf - -C $VpsRoot"
+    & cmd /c "tar -cf - -C `"$out`" robi/latest.json | tailscale ssh $Vps `"tar -xf - -C $VpsRoot`""
     if ($LASTEXITCODE -ne 0) { throw 'upload of latest.json failed' }
+    $remote = Invoke-WebRequest -Uri "$BaseUrl/$Version/release.zip" -UseBasicParsing -Method Head
+    if ([int64]$remote.Headers['Content-Length'] -ne (Get-Item $zip).Length) { throw 'release.zip on the VPS has a different size' }
     $check = Invoke-WebRequest -Uri "$BaseUrl/latest.json?t=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" -UseBasicParsing
     if (($check.Content | ConvertFrom-Json).version -ne $Version) { throw 'latest.json on the VPS does not show the new version' }
     Write-Host "[publish] live: $BaseUrl/latest.json -> $Version (tablets pick it up within 15 min, on the home screen)"
