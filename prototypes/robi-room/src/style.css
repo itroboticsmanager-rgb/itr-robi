@@ -196,3 +196,25 @@ html,body{overscroll-behavior:none}
 .sleep-title{margin:0;font-size:2.2rem;font-weight:650;letter-spacing:-.03em;color:oklch(88% .03 250)}
 .sleep-hint{margin:0;font-size:1rem;opacity:.7;animation:sleep-breath 4s ease-in-out infinite}
 @keyframes sleep-breath{50%{opacity:.35}}
+/* «Що зараз на заняттях»: локальний екран для батьків у холі. */
+.lessons-screen{position:fixed;inset:0;z-index:30;background:oklch(96% .014 245);padding:28px 40px;display:flex;flex-direction:column;overflow:hidden}
+.lessons-screen .content-bar{margin-bottom:20px}
+.lessons-screen .content-title{margin-bottom:20px}
+.lessons-screen .content-title:focus{outline:0}
+.lessons-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:26px}
+.lessons-heading{margin:0 0 12px;font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.lessons-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+.lesson-card{--accent:var(--blue);display:flex;gap:16px;align-items:flex-start;padding:18px 20px;border-radius:18px;background:var(--paper);border:1px solid var(--line)}
+.lesson-icon{flex:0 0 auto;display:grid;place-items:center;width:48px;height:48px;border-radius:14px;background:color-mix(in oklch,var(--accent) 14%,white);color:var(--accent)}
+.lesson-icon svg{width:26px;height:26px}
+.lesson-copy{flex:1;min-width:0}
+.lesson-course{margin:0 0 6px;font-size:1.2rem;line-height:1.25;letter-spacing:-.02em;font-weight:680;overflow-wrap:anywhere}
+.lesson-time{margin:0;font-size:1rem;font-weight:650;color:var(--ink)}
+.lesson-left{margin:8px 0 0;font-size:.85rem;color:var(--muted)}
+.lesson-progress{margin-top:12px;height:8px;border-radius:99px;background:color-mix(in oklch,var(--accent) 14%,white);overflow:hidden}
+.lesson-progress::after{content:"";display:block;height:100%;width:calc(var(--share,0) * 100%);border-radius:inherit;background:var(--accent)}
+.lesson-card.now{border-color:color-mix(in oklch,var(--accent) 45%,var(--line));box-shadow:0 6px 22px color-mix(in oklch,var(--accent) 16%,transparent)}
+.lesson-card.done{opacity:.55}
+.lessons-empty{margin:0;padding:22px;border-radius:18px;background:var(--paper);border:1px solid var(--line);font-size:1.1rem;line-height:1.5}
+@media(max-width:700px){.lessons-screen{padding:18px}.lessons-grid{grid-template-columns:1fr}}
+@media(min-width:1500px){.lessons-screen{padding:40px 60px}}

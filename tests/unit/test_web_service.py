@@ -98,7 +98,10 @@ def test_health_reports_when_the_page_last_polled() -> None:
     # з якої Edge пішов, виглядала б живою завдяки самим перевіркам.
     with _service() as service:
         _, body = _get(service, "/api/health")
-        assert json.loads(body) == {"ok": True, "page_age_s": None}
+        health = json.loads(body)
+        assert health["ok"] is True and health["page_age_s"] is None
+        # Режим екрана — для оновлювача (міняє реліз лише на головній).
+        assert "mode" in health
         _get(service, "/api/health")
         assert json.loads(_get(service, "/api/health")[1])["page_age_s"] is None
         _get(service, "/api/snapshot")

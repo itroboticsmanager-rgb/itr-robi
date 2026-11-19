@@ -109,6 +109,10 @@ class CommandKind(str, Enum):
     OPEN_FORM = "command.open_form"
     CANCEL = "command.cancel"
     REQUEST_STATUS = "command.request_status"
+    #: Обслуговування з CRM: перезапустити кіоск (службу й Edge — наглядач).
+    RESTART = "command.restart"
+    #: Обслуговування з CRM: зняти екран і надіслати в CRM.
+    SCREENSHOT = "command.screenshot"
 
 
 @dataclass(frozen=True, slots=True)

@@ -14,7 +14,8 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
+import urllib.request
+from urllib.parse import quote, urlsplit
 
 import pygame
 
@@ -34,6 +35,8 @@ from .events import (
     now,
 )
 from .hardware.fake import FakeNfc, FakeOutputs, FakeToF
+from .hardware.screen import capture_jpeg
+from .lessons_today import fetch_lessons
 from .hardware.system import FakeSystemControls, SystemControls, make_system_controls
 from .health.metrics import FrameStats, Metrics
 from .integration.crm import CrmClient
@@ -60,6 +63,14 @@ from .vision.fake import FakeVision
 #: У метриках лишається справжній час кадру: приховувати затримку не можна,
 #: її треба бачити.
 MAX_STEP_S = 0.1
+#: Скільки чекати перед виходом за командою «перезапустити»: ack має піти в CRM.
+RESTART_DELAY_S = 1.5
+#: Код виходу служби за командою CRM — у журналі наглядача видно, що це не збій.
+RESTART_EXIT_CODE = 75
+#: Як часто служба забирає сьогоднішні заняття з CRM.
+LESSONS_REFRESH_S = 300.0
+#: Назва релізу — тека, з якої запущено код (`C:/ROBI/kiosk-releases/<назва>/app/src/robi`).
+RELEASE_NAME = Path(__file__).resolve().parents[3].name
 
 #: Наскільки далеко може поїхати палець, і рух ще рахується натисканням.
 TAP_SLOP = 0.03
@@ -218,6 +229,13 @@ class App:
         self._settings_thread: threading.Thread | None = None
         self._settings_applied: dict[str, int] = {}
         self._settings_report = "none"
+        #: Монотонний момент, коли служба завершиться за командою CRM (наглядач
+        #: перезапустить її й Edge). None — перезапуску не просили.
+        self._restart_due: float | None = None
+        #: Сьогоднішні групові заняття з CRM («Що зараз на заняттях»).
+        self._lessons_today: list = []
+        self._lessons_stop = threading.Event()
+        self._screenshot_busy = threading.Event()
         # «Без вікна» не означає «без заліза»: веб-кіоск теж headless, але
         # мусить керувати справжнім екраном і звуком — тому він передає
         # `system` явно. Типова підміна лишається для тестів і `--headless`
@@ -346,6 +364,7 @@ class App:
                     fresh, reason = self._settings_store.refresh(
                         self.config.settings.url, secret,
                         applied=self._settings_set.revision, report=self._settings_report,
+                        release=RELEASE_NAME,
                     )
                     if fresh is not None:
                         previous = self._settings_set.revision
@@ -497,6 +516,9 @@ class App:
             )
             self._settings_thread.start()
 
+        if self.config.web.enabled and self.crm is not None and self._crm_api("/api/device/lessons-today"):
+            threading.Thread(target=self._lessons_forever, name="robi-lessons", daemon=True).start()
+
         if self._content_store is not None and self.config.content.url:
             self._content_thread = threading.Thread(
                 target=self._refresh_content_forever, name="robi-content", daemon=True
@@ -589,6 +611,7 @@ class App:
         # до того — як у конфігурації пристрою.
         state["idle_timeout_s"] = kiosk.idle_timeout_s if self._settings_set.revision else self.config.content.timeout_s
         state["settings"] = kiosk.for_web(self._settings_effective)
+        state["lessons_today"] = [lesson.for_web() for lesson in self._lessons_today]
         state["mascot"]["gaze"] = list(mascot.face._gaze) if self.vision.capturing and mascot._since_face < 1.5 else None
         state["banners"] = [
             {"id": b.id, "title": b.title, "description": b.description,
@@ -764,6 +787,7 @@ class App:
 
     def shutdown(self) -> None:
         self._settings_stop.set()
+        self._lessons_stop.set()
         self._settings_wake.set()
         self._banner_stop.set()
         self._content_stop.set()
@@ -808,6 +832,9 @@ class App:
         # TTL команд це не зачіпає: координатор живе на годиннику, а не на
         # dt, тож реальна затримка коректно погасить прострочений сценарій.
         sim_dt = min(dt, MAX_STEP_S)
+        if self._restart_due is not None and time.monotonic() >= self._restart_due:
+            print("[restart] перезапуск за командою CRM", flush=True)
+            os._exit(RESTART_EXIT_CODE)
 
         events: list[Event] = []
         events.extend(self._pump_window())
@@ -962,11 +989,78 @@ class App:
             verdict = self.policy.check(str(cmd.payload.get("url", "")))
             if not verdict.ok:
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, verdict.reason)
+        if cmd.kind is CommandKind.RESTART:
+            # Перезапуск має сенс лише під наглядачем веб-кіоску: він підніме
+            # службу й Edge заново. Без нього служба просто зникла б.
+            if not self.config.web.enabled:
+                return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unsupported_mode")
+            # Невелика пауза: підтвердження має встигнути піти в CRM.
+            self._restart_due = time.monotonic() + RESTART_DELAY_S
+            return CommandResult(cmd.command_id, CommandStatus.ACCEPTED)
+        if cmd.kind is CommandKind.SCREENSHOT:
+            if not self._crm_api("/api/device/screenshot-upload") or self.crm is None:
+                return CommandResult(cmd.command_id, CommandStatus.REJECTED, "not_configured")
+            if self._screenshot_busy.is_set():
+                return CommandResult(cmd.command_id, CommandStatus.ACCEPTED, "in_progress")
+            self._screenshot_busy.set()
+            threading.Thread(target=self._send_screenshot, name="robi-screenshot", daemon=True).start()
+            return CommandResult(cmd.command_id, CommandStatus.ACCEPTED)
         if cmd.kind is CommandKind.SET_MODE and cmd.payload.get("mode") == "info":
             node = str(cmd.payload.get("node", "")).strip()
             if node and (not self.content or node not in self.content.nodes):
                 return CommandResult(cmd.command_id, CommandStatus.REJECTED, "unknown_node")
         return self.coordinator.apply(cmd)
+
+    def _lessons_forever(self) -> None:
+        """Раз на 5 хв забирає сьогоднішні заняття. Збій лишає попередній список."""
+        secret = self.crm.read_secret() if self.crm is not None else ""
+        url = self._crm_api("/api/device/lessons-today")
+        while not self._lessons_stop.is_set():
+            try:
+                lessons, _reason = fetch_lessons(url, secret)
+                if lessons is not None:
+                    self._lessons_today = lessons
+            except Exception as exc:  # noqa: BLE001 — потік мусить жити далі
+                try:
+                    print(f"[lessons] збій: {type(exc).__name__}: {exc}", flush=True)
+                except Exception:  # noqa: BLE001
+                    pass
+            self._lessons_stop.wait(LESSONS_REFRESH_S)
+
+    def _crm_api(self, path: str) -> str:
+        """Адреса маршруту CRM: той самий хост, що й обмін секрету на токен."""
+        base = self.config.crm.token_url or self.config.settings.url
+        parts = urlsplit(base) if base else None
+        if not parts or parts.scheme != "https" or not parts.netloc:
+            return ""
+        return f"{parts.scheme}://{parts.netloc}{path}"
+
+    def _send_screenshot(self) -> None:
+        """Знімає екран і надсилає в CRM. Окремий потік: GDI й мережа повільні."""
+        try:
+            shot = capture_jpeg()
+            if shot is None:
+                print("[screenshot] не вдалося зняти екран", flush=True)
+                return
+            secret = self.crm.read_secret() if self.crm is not None else ""
+            request = urllib.request.Request(
+                self._crm_api("/api/device/screenshot-upload"),
+                data=shot.jpeg,
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {secret}",
+                    "Content-Type": "image/jpeg",
+                    "X-Robi-Width": str(shot.width),
+                    "X-Robi-Height": str(shot.height),
+                },
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                response.read(256)
+            print(f"[screenshot] надіслано {shot.width}x{shot.height}, {len(shot.jpeg) // 1024} КБ", flush=True)
+        except Exception as exc:  # noqa: BLE001 — знімок не має валити службу
+            print(f"[screenshot] збій: {type(exc).__name__}: {exc}", flush=True)
+        finally:
+            self._screenshot_busy.clear()
 
     def _pump_crm(self) -> None:
         if self.crm is None:

@@ -38,6 +38,9 @@ param(
     [switch]$NoCustomShell,
     [Parameter(ParameterSetName = 'Install')]
     [switch]$StartNow,
+    # Self-update manifest (robi-update.ps1, task "ROBI Update"); 'off' disables.
+    [Parameter(ParameterSetName = 'Install')]
+    [string]$UpdateUrl = 'https://vps.itrobotics.com.ua/guide-files/robi/latest.json',
     [Parameter(ParameterSetName = 'Unlock', Mandatory = $true)]
     [switch]$Unlock,
     [Parameter(ParameterSetName = 'Uninstall', Mandatory = $true)]
@@ -145,9 +148,11 @@ if (-not (Test-Path -LiteralPath $deviceConfig)) { throw "device config not foun
 
 New-Item -ItemType Directory -Path $KioskDir, $LogDir -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'robi-kiosk.ps1') -Destination $Supervisor -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'robi-update.ps1') -Destination (Join-Path $KioskDir 'robi-update.ps1') -Force
 $cfg = [ordered]@{
     release = $Release; port = $Port; python = $python
     device_config = $deviceConfig; log_dir = $LogDir; offline = [bool]$Offline
+    update_url = $UpdateUrl
 }
 [IO.File]::WriteAllText((Join-Path $KioskDir 'kiosk.json'), ($cfg | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
 Say "kiosk.json -> release $Release, port $Port"
@@ -260,6 +265,23 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($trigger, $tick) -Principal $taskPrincipal `
     -Settings $settings -Description 'ROBI kiosk guardian: keeps the supervisor alive (D-064)' -Force | Out-Null
 Say "task '$TaskName' registered for $account"
+
+# Self-update (robi-update.ps1): SYSTEM, at boot and every 15 minutes. It only
+# switches releases while the kiosk shows its home screen and rolls back a
+# release that does not come up.
+$updateTask = 'ROBI Update'
+$updateAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $KioskDir 'robi-update.ps1') + '"') `
+    -WorkingDirectory $KioskDir
+$updateBoot = New-ScheduledTaskTrigger -AtStartup
+$updateBoot.Delay = 'PT5M'
+$updateTick = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 15)
+$updatePrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+$updateSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 20) -MultipleInstances IgnoreNew -StartWhenAvailable
+Register-ScheduledTask -TaskName $updateTask -Action $updateAction -Trigger @($updateBoot, $updateTick) -Principal $updatePrincipal `
+    -Settings $updateSettings -Description 'ROBI kiosk self-update with rollback' -Force | Out-Null
+Say "task '$updateTask' registered (SYSTEM, every 15 min; manifest $UpdateUrl)"
 
 $startupDirs = @((Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\StartUp'),
                  (Join-Path $profilePath 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup'))

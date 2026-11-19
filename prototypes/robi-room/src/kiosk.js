@@ -4,6 +4,7 @@ import { element, icon } from './icons.js';
 import { createBannerArt } from './banners.js';
 import { createFormScreen, WARN_BEFORE_MS } from './form.js';
 import { applyKioskSettings, kioskSettings } from './kiosk-settings.js';
+import { createLessonsScreen, hasLessonsAhead } from './lessons.js';
 
 const $ = s => document.querySelector(s);
 
@@ -27,8 +28,25 @@ export function createKiosk({ pauseScene, mascot }) {
   function setAsleep(value) {
     if (value === asleep) return;
     asleep = value; sleep.hidden = !value;
-    $('#home').inert = value || mode !== 'home';
-    pauseScene(value || mode === 'info' || mode === 'qr' || mode === 'scanner' || mode === 'form');
+    $('#home').inert = value || mode !== 'home' || lessonsScreen.open;
+    pauseScene(value || lessonsScreen.open || mode === 'info' || mode === 'qr' || mode === 'scanner' || mode === 'form');
+  }
+  // «Що зараз на заняттях»: локальний екран, як і сон, — служба про нього
+  // не знає. Відкритий екран закривається кнопкою, бездіяльністю або будь-яким
+  // екраном від CRM (QR, анкета).
+  let lessonsToday = [], lessonsAhead = false;
+  const lessonsScreen = createLessonsScreen($('#screens'), { onClose: () => closeLessons() });
+  function openLessons() {
+    if (mode !== 'home') return;
+    lessonsScreen.setLessons(lessonsToday); lessonsScreen.show();
+    $('#home').inert = true; pauseScene(true);
+  }
+  function closeLessons() {
+    if (!lessonsScreen.open) return;
+    lessonsScreen.hide();
+    $('#home').inert = asleep || mode !== 'home';
+    pauseScene(asleep || mode !== 'home');
+    if (mode === 'home') ($('#launcher .lessons-launcher') ?? $('#launcher button'))?.focus({ preventScroll: true });
   }
   const screen = createContentScreen($('#screens'), nav, { onClose: () => close(), onActivity: activity, onQr: id => openQr(id) });
   const qr = element('section', 'qr-screen'); qr.hidden = true; qr.setAttribute('aria-label', 'QR-код');
@@ -140,8 +158,9 @@ export function createKiosk({ pauseScene, mascot }) {
       if (!form.show(display.url, display.title)) { next = 'home'; mode = 'home'; }
       else lastFormActivity = 0;
     }
-    $('#home').inert = next !== 'home' || asleep;
-    pauseScene(asleep || next === 'info' || next === 'qr' || next === 'scanner' || next === 'form');
+    if (next !== 'home') closeLessons();
+    $('#home').inert = next !== 'home' || asleep || lessonsScreen.open;
+    pauseScene(asleep || lessonsScreen.open || next === 'info' || next === 'qr' || next === 'scanner' || next === 'form');
     document.body.dataset.screen = mode;
     if (returning) {
       launcherPage = returnPage; renderLauncher();
@@ -206,7 +225,7 @@ export function createKiosk({ pauseScene, mascot }) {
     // Wi-Fi і сканер — локальні постійні дії, а не контент CRM. Вони займають
     // останні місця на кожній сторінці, щоб гість не мусив їх шукати.
     const showScanner = scannerAvailable && kioskSettings.show_scanner;
-    const perRow = 5, fixedCount = (kioskSettings.show_wifi ? 1 : 0) + (showScanner ? 1 : 0);
+    const perRow = 5, fixedCount = (lessonsAhead ? 1 : 0) + (kioskSettings.show_wifi ? 1 : 0) + (showScanner ? 1 : 0);
     const paged = all.length > perRow - fixedCount;
     const pageSize = paged ? perRow - fixedCount - 1 : perRow - fixedCount;
     launcherPage = Math.min(launcherPage, Math.max(0, Math.ceil(all.length / pageSize) - 1));
@@ -239,6 +258,11 @@ export function createKiosk({ pauseScene, mascot }) {
     if (paged) {
       const more = launcherButton('grid', 'Ще розділи');
       more.addEventListener('click', () => { launcherPage = (launcherPage + 1) % Math.ceil(all.length / pageSize); renderLauncher(); }); launcher.append(more);
+    }
+    if (lessonsAhead) {
+      const lessonsButton = launcherButton('time', 'Зараз на заняттях');
+      lessonsButton.classList.add('lessons-launcher');
+      lessonsButton.addEventListener('click', openLessons); launcher.append(lessonsButton);
     }
     if (kioskSettings.show_wifi) {
       const wifi = launcherButton('wifi', 'Wi-Fi');
@@ -302,14 +326,17 @@ export function createKiosk({ pauseScene, mascot }) {
     connected = true; lastSnapshotAt = performance.now();
     timeout = Number.isFinite(snapshot.idle_timeout_s) ? Math.max(15, snapshot.idle_timeout_s) : 45;
     const settingsChanged = applyKioskSettings(snapshot.settings);
-    const hadScanner = scannerAvailable;
+    const hadScanner = scannerAvailable, hadLessons = lessonsAhead;
+    lessonsToday = Array.isArray(snapshot.lessons_today) ? snapshot.lessons_today : [];
+    lessonsAhead = hasLessonsAhead(lessonsToday);
+    lessonsScreen.setLessons(lessonsToday);
     scannerAvailable = snapshot.capabilities?.scanner === true;
     const ck = JSON.stringify(snapshot.content), bk = JSON.stringify(snapshot.banners);
     if (ck !== contentKey) {
       contentKey = ck; tree = new ContentTree(snapshot); nav.tree = tree; renderLauncher();
       if (mode === 'info' && !tree.has(nav.current?.id)) setMode('home');
     }
-    else if (hadScanner !== scannerAvailable || settingsChanged) renderLauncher();
+    else if (hadScanner !== scannerAvailable || hadLessons !== lessonsAhead || settingsChanged) renderLauncher();
     if (bk !== bannersKey || ck !== lastBannerContent) { bannersKey = bk; lastBannerContent = ck; renderBanners(snapshot.banners); }
     mascot(snapshot.mascot?.state ?? 'idle', snapshot.mascot?.gaze);
     const d = snapshot.display;
@@ -449,7 +476,7 @@ export function createKiosk({ pauseScene, mascot }) {
     // У сканері результат має з'явитися одразу, а не через ¾ секунди.
     setTimeout(poll, mode === 'scanner' ? 250 : 750);
   }
-  let tickAt = performance.now();
+  let tickAt = performance.now(), lessonsTickAt = 0;
   setInterval(() => {
     const now = performance.now(), dt = Math.min(300, now - tickAt); tickAt = now;
     expire();
@@ -459,7 +486,9 @@ export function createKiosk({ pauseScene, mascot }) {
       if (left > 0 && left < WARN_BEFORE_MS) form.warn(Math.ceil(left / 1000)); else form.calm();
     }
     syncBannerMotion();
-    setAsleep(kioskSettings.sleeping && mode === 'home' && now - lastTouch > timeout * 1000);
+    if (lessonsScreen.open && now - lastTouch > timeout * 1000) closeLessons();
+    if (lessonsScreen.open && now - lessonsTickAt > 15000) { lessonsTickAt = now; lessonsScreen.tick(); }
+    setAsleep(kioskSettings.sleeping && mode === 'home' && !lessonsScreen.open && now - lastTouch > timeout * 1000);
     // Кнопок каруселі немає, тож банери гортаються самі завжди, і при
     // зменшеній анімації теж (тоді лише без переходу), інакше кіоск
     // назавжди лишився б на першому банері.

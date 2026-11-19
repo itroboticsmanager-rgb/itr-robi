@@ -203,7 +203,7 @@ class SettingsStore:
             return None
 
     def refresh(
-        self, url: str, secret: str, *, applied: int = 0, report: str = "", timeout: float = 10.0
+        self, url: str, secret: str, *, applied: int = 0, report: str = "", release: str = "", timeout: float = 10.0
     ) -> tuple[SettingsSet | None, str]:
         """Свіжий набір або `(None, причина)`; невдача лишає кеш як був.
 
@@ -216,6 +216,8 @@ class SettingsStore:
             "Authorization": f"Bearer {secret}",
             "X-Robi-Applied-Revision": str(applied),
             "X-Robi-Controls": report[:200],
+            # Назва релізу: CRM показує, на якій версії програми стійка.
+            "X-Robi-Release": release[:64],
         })
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:

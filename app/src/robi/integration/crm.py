@@ -279,7 +279,7 @@ class CrmClient:
         await ws.send(json.dumps({
             "type": "device.hello",
             "device_id": self._device_id,
-            "capabilities": ["mascot", "qr"],
+            "capabilities": ["mascot", "qr", "restart", "screenshot"],
         }))
 
     async def _pump(self, ws) -> None:

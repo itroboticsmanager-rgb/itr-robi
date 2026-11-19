@@ -195,7 +195,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/health":
             age = self.route.beat.age() if self.route.beat is not None else None
-            self._json({"ok": True, "page_age_s": None if age is None else round(age, 1)})
+            # Режим екрана — для оновлювача: реліз міняємо лише на головній,
+            # а не посеред анкети чи QR, які саме тримають батьки.
+            try:
+                display = dict(self.route.provider()).get("display") or {}
+                mode = str(display.get("mode", "")) if isinstance(display, Mapping) else ""
+            except Exception:  # noqa: BLE001 — health не має падати через знімок
+                mode = ""
+            self._json({"ok": True, "page_age_s": None if age is None else round(age, 1), "mode": mode})
             return
         if path.startswith("/media/") and self.route.asset is not None:
             target = self.route.asset(path)
