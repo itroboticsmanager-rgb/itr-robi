@@ -23,6 +23,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Without this Invoke-WebRequest draws a progress bar even with no console;
+# as SYSTEM from the Task Scheduler that hung the very first update
+# (tablet, 2026-11-19) - and it slows downloads down in any case.
+$ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 [Net.ServicePointManager]::DefaultConnectionLimit = 16
 
@@ -119,6 +123,7 @@ try {
     $sha = ([string]$manifest.sha256).ToUpperInvariant()
     if ($sha -notmatch '^[0-9A-F]{64}$') { throw 'bad sha256 in manifest' }
 
+    Write-Log "found $version (current: $(Split-Path -Leaf $current))"
     if (-not $Force) {
         $h = Get-Health $port
         if ($h -and $h.mode -and $h.mode -ne 'home') { Write-Log "update $version waits: screen is '$($h.mode)'"; exit 0 }
@@ -144,6 +149,7 @@ try {
 
     # The release must at least import with this tablet's Python before it
     # touches the kiosk.
+    Write-Log "checking that $version imports"
     $python = ([string]$cfg.python) -replace 'pythonw\.exe$', 'python.exe'
     $src = Join-Path $target 'app\src'
     $probe = "import sys; sys.path.insert(0, r'$src'); import robi.web.__main__, robi.bootstrap"
