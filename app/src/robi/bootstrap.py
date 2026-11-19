@@ -317,30 +317,51 @@ class App:
         secret = self.crm.read_secret() if self.crm is not None else ""
         next_fetch = 0.0
         last_assert = time.monotonic()
+        # Спершу застосувати набір із кешу: тоді вже перший запит до CRM
+        # несе справжній звіт керування, а не «none».
+        try:
+            self._apply_settings(force=True)
+        except Exception as exc:  # noqa: BLE001
+            try:
+                print(f"[settings] кеш не застосовано: {type(exc).__name__}: {exc}", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
         while not self._settings_stop.is_set():
-            moment = time.monotonic()
-            woken = self._settings_wake.is_set()
-            if self.config.settings.url and secret and (woken or moment >= next_fetch):
-                self._settings_wake.clear()
-                fresh, reason = self._settings_store.refresh(
-                    self.config.settings.url, secret,
-                    applied=self._settings_set.revision, report=self._settings_report,
-                )
-                if fresh is not None:
-                    if fresh.revision != self._settings_set.revision:
-                        print(f"[settings] застосовую версію {fresh.revision}", flush=True)
-                    self._settings_set = fresh
-                elif reason.startswith("invalid"):
-                    print(f"[settings] набір із CRM відхилено, лишається попередній: {reason}", flush=True)
-                next_fetch = moment + self.config.settings.refresh_s
-            else:
-                self._settings_wake.clear()
-            # Раз на 10 хвилин значення ставляться повторно: хтось міг
-            # покрутити гучність кнопками планшета, а CRM — джерело правди.
-            force = moment - last_assert > 600
-            if force:
-                last_assert = moment
-            self._apply_settings(force=force)
+            # Один збій (журнал, WMI, мережа) не має вбити потік: 19.11.2026
+            # саме так стійка назавжди перестала брати нові версії з CRM.
+            try:
+                moment = time.monotonic()
+                woken = self._settings_wake.is_set()
+                if self.config.settings.url and secret and (woken or moment >= next_fetch):
+                    self._settings_wake.clear()
+                    next_fetch = moment + self.config.settings.refresh_s
+                    fresh, reason = self._settings_store.refresh(
+                        self.config.settings.url, secret,
+                        applied=self._settings_set.revision, report=self._settings_report,
+                    )
+                    if fresh is not None:
+                        previous = self._settings_set.revision
+                        self._settings_set = fresh
+                        if fresh.revision != previous:
+                            print(f"[settings] застосовую версію {fresh.revision}", flush=True)
+                            # CRM дізнається застосовану версію лише з наступного
+                            # запиту: без цього адмін 5 хв бачив би «чекає».
+                            next_fetch = moment + 20.0
+                    elif reason.startswith("invalid"):
+                        print(f"[settings] набір із CRM відхилено, лишається попередній: {reason}", flush=True)
+                else:
+                    self._settings_wake.clear()
+                # Раз на 10 хвилин значення ставляться повторно: хтось міг
+                # покрутити гучність кнопками планшета, а CRM — джерело правди.
+                force = moment - last_assert > 600
+                if force:
+                    last_assert = moment
+                self._apply_settings(force=force)
+            except Exception as exc:  # noqa: BLE001 — потік мусить жити далі
+                try:
+                    print(f"[settings] збій циклу, продовжую: {type(exc).__name__}: {exc}", flush=True)
+                except Exception:  # noqa: BLE001
+                    pass
             self._settings_wake.wait(15.0)
 
     def _apply_settings(self, *, force: bool = False, now: datetime | None = None) -> None:

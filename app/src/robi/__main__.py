@@ -6,9 +6,11 @@ import argparse
 import sys
 
 from .config import Config, ConfigError
+from .console import use_utf8_streams
 
 
 def main(argv: list[str] | None = None) -> int:
+    use_utf8_streams()
     parser = argparse.ArgumentParser(prog="robi", description="ROBI device app")
     parser.add_argument("-c", "--config", help="шлях до device.toml")
     parser.add_argument("--offline", action="store_true", help="не підключатися до CRM")

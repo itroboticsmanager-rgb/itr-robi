@@ -4,9 +4,11 @@ import argparse
 from pathlib import Path
 
 from ..config import Config
+from ..console import use_utf8_streams
 
 
 def main():
+    use_utf8_streams()
     parser = argparse.ArgumentParser(description="ROBI web kiosk service")
     parser.add_argument("--config", required=True, help="Existing device TOML; secrets stay on the device")
     parser.add_argument("--root", required=True, help="Built web interface directory")
